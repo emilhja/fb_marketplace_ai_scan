@@ -89,6 +89,7 @@ def listing_content_hash(listing: Listing) -> str:
         "condition": listing.condition,
         "description": listing.description,
         "post_url": normalize_url(listing.post_url),
+        "original_price": listing.original_price or "",
     }
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
@@ -189,6 +190,12 @@ def ensure_database() -> bool:
                 """
                 ALTER TABLE listings
                 ADD COLUMN IF NOT EXISTS skick TEXT NOT NULL DEFAULT '';
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE listings
+                ADD COLUMN IF NOT EXISTS original_price TEXT NOT NULL DEFAULT '';
                 """
             )
             cur.execute(
@@ -335,14 +342,15 @@ def _upsert_listing(cur: Any, listing: Listing) -> int:
         """
         INSERT INTO listings (
             listing_key, marketplace, marketplace_listing_id, canonical_post_url,
-            title, current_price, last_content_hash,
+            title, current_price, original_price, last_content_hash,
             description, location, skick
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (listing_key)
         DO UPDATE SET
             title = EXCLUDED.title,
             current_price = EXCLUDED.current_price,
+            original_price = EXCLUDED.original_price,
             last_content_hash = EXCLUDED.last_content_hash,
             description = EXCLUDED.description,
             location = EXCLUDED.location,
@@ -358,6 +366,7 @@ def _upsert_listing(cur: Any, listing: Listing) -> int:
             normalize_url(listing.post_url),
             listing.title,
             listing.price,
+            listing.original_price or "",
             listing_content_hash(listing),
             listing.description or "",
             listing.location or "",

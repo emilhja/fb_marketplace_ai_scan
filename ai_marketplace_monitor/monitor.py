@@ -208,16 +208,27 @@ class MarketplaceMonitor:
                         )
                 else:
                     if self.logger:
+                        orig_log = (
+                            f""", original ask {hilight(listing.original_price)}"""
+                            if listing.original_price
+                            else ""
+                        )
                         self.logger.info(
                             f"""{hilight("[PriceChange]", "succ")} Price updated"""
                             f""" {hilight(price_state.previous_price)} → {hilight(listing.price)}"""
+                            f"""{orig_log}"""
                             f""" for {hilight(listing.title)} ({listing.post_url.split("?")[0]})."""
                         )
                     url = listing.post_url.split("?")[0]
                     alert_title = f"Price change: {listing.name or item_config.name}"
+                    orig_line = (
+                        f" (seller original ask: {listing.original_price})"
+                        if listing.original_price
+                        else ""
+                    )
                     alert_body = (
                         f"{listing.title}\n"
-                        f"{price_state.previous_price} → {listing.price}, {listing.location}\n"
+                        f"{price_state.previous_price} → {listing.price}{orig_line}, {listing.location}\n"
                         f"{url}"
                     )
                     for user in users_to_notify:
@@ -235,6 +246,7 @@ class MarketplaceMonitor:
                             details={
                                 "previous_price": price_state.previous_price,
                                 "new_price": listing.price,
+                                "original_price": listing.original_price or None,
                                 "item": item_config.name,
                             },
                             logger=self.logger,
