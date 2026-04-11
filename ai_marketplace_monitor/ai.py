@@ -11,7 +11,7 @@ from rich.pretty import pretty_repr
 
 from .listing import Listing
 from .marketplace import TItemConfig, TMarketplaceConfig
-from .pg_cache import get_cached_ai_response, store_ai_evaluation
+from .pg_cache import get_cached_ai_response, store_ai_evaluation, store_ai_evaluation_if_absent
 from .utils import BaseConfig, CacheType, CounterItem, cache, counter, hilight
 
 
@@ -302,6 +302,18 @@ class OpenAIBackend(AIBackend):
                 self.logger.debug(
                     f"""{hilight("[AI]", res.style)} {self.config.name} previously concluded {hilight(f"{res.conclusion} ({res.score}): {res.comment}", res.style)} for listing {hilight(listing.title)}."""
                 )
+            # Disk cache hit skips the API branch below, so PostgreSQL would never get a row; backfill when enabled.
+            store_ai_evaluation_if_absent(
+                listing=listing,
+                model=self.config.model or self.default_model,
+                prompt=prompt,
+                item_config_hash=item_config.hash,
+                marketplace_config_hash=marketplace_config.hash,
+                score=res.score,
+                conclusion=res.conclusion,
+                comment=res.comment,
+                logger=self.logger,
+            )
             return res
 
         self.connect()

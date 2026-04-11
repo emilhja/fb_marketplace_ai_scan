@@ -235,8 +235,46 @@ def ensure_database() -> bool:
     return True
 
 
+@dataclass
+class ListingPriceState:
+    """Result of fetch_listing_price_state."""
+    exists: bool
+    previous_price: str | None  # None when listing not yet in DB
+
+
+def fetch_listing_price_state(listing: Listing, logger: Any = None) -> ListingPriceState:
+    """Return whether the listing exists in DB and what its stored price is, without writing."""
+    if not cache_enabled():
+        return ListingPriceState(exists=False, previous_price=None)
+    key = listing_key_from_listing(listing)
+    try:
+        ensure_database()
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT current_price FROM listings WHERE listing_key = %s LIMIT 1;",
+                    (key,),
+                )
+                row = cur.fetchone()
+        if row is None:
+            return ListingPriceState(exists=False, previous_price=None)
+        return ListingPriceState(exists=True, previous_price=str(row[0]))
+    except Exception as exc:  # pragma: no cover
+        if logger:
+            logger.debug(f"[AIMM-DB] fetch_listing_price_state failed: {exc}")
+        return ListingPriceState(exists=False, previous_price=None)
+
+
 def _upsert_listing(cur: Any, listing: Listing) -> int:
+    """Upsert listing row and insert price history only when price is new or changed."""
     listing_id = extract_marketplace_listing_id(listing.post_url, listing.id)
+    key = f"{listing.marketplace}:{listing_id}"
+
+    # Read the stored price before upserting so we can decide whether to add a history row.
+    cur.execute("SELECT id, current_price FROM listings WHERE listing_key = %s LIMIT 1;", (key,))
+    existing = cur.fetchone()
+    previous_price: str | None = str(existing[1]) if existing is not None else None
+
     cur.execute(
         """
         INSERT INTO listings (
@@ -254,7 +292,7 @@ def _upsert_listing(cur: Any, listing: Listing) -> int:
         RETURNING id;
         """,
         (
-            f"{listing.marketplace}:{listing_id}",
+            key,
             listing.marketplace,
             listing_id,
             normalize_url(listing.post_url),
@@ -264,13 +302,16 @@ def _upsert_listing(cur: Any, listing: Listing) -> int:
         ),
     )
     internal_id = int(cur.fetchone()[0])
-    cur.execute(
-        """
-        INSERT INTO listing_price_history (listing_id, price, observed_at)
-        VALUES (%s, %s, NOW());
-        """,
-        (internal_id, listing.price),
-    )
+
+    # Only record a price history entry when price actually changes (or on first insert).
+    if previous_price is None or previous_price != listing.price:
+        cur.execute(
+            """
+            INSERT INTO listing_price_history (listing_id, price, observed_at)
+            VALUES (%s, %s, NOW());
+            """,
+            (internal_id, listing.price),
+        )
     return internal_id
 
 
@@ -412,7 +453,81 @@ def store_ai_evaluation(
             logger.info("[AIMM-DB] ai_eval_persisted")
     except Exception as exc:  # pragma: no cover
         if logger:
-            logger.debug(f"[AIMM-DB] store_ai_evaluation failed: {exc}")
+            logger.warning(f"[AIMM-DB] store_ai_evaluation failed: {exc}")
+
+
+def store_ai_evaluation_if_absent(
+    *,
+    listing: Listing,
+    model: str,
+    prompt: str,
+    item_config_hash: str,
+    marketplace_config_hash: str,
+    score: int,
+    conclusion: str,
+    comment: str,
+    logger: Any = None,
+) -> None:
+    """Persist one AI row when missing (e.g. result served from disk cache after PG was enabled)."""
+    if not cache_enabled():
+        return
+    try:
+        ensure_database()
+        pv = prompt_version()
+        ph = prompt_hash(prompt)
+        ch = listing_content_hash(listing)
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                listing_id = _upsert_listing(cur, listing)
+                cur.execute(
+                    """
+                    SELECT 1 FROM ai_evaluations
+                    WHERE listing_id = %s AND model = %s
+                      AND item_config_hash = %s AND marketplace_config_hash = %s
+                      AND prompt_version = %s AND prompt_hash = %s AND content_hash = %s
+                    LIMIT 1;
+                    """,
+                    (
+                        listing_id,
+                        model,
+                        item_config_hash,
+                        marketplace_config_hash,
+                        pv,
+                        ph,
+                        ch,
+                    ),
+                )
+                if cur.fetchone() is not None:
+                    conn.commit()
+                    return
+                cur.execute(
+                    """
+                    INSERT INTO ai_evaluations (
+                        listing_id, model, item_config_hash, marketplace_config_hash, prompt_version, prompt_hash,
+                        listing_price, content_hash, score, conclusion, comment, evaluated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW());
+                    """,
+                    (
+                        listing_id,
+                        model,
+                        item_config_hash,
+                        marketplace_config_hash,
+                        pv,
+                        ph,
+                        listing.price,
+                        ch,
+                        score,
+                        conclusion,
+                        comment,
+                    ),
+                )
+            conn.commit()
+        if logger:
+            logger.info("[AIMM-DB] ai_eval_persisted (backfilled from disk cache)")
+    except Exception as exc:  # pragma: no cover
+        if logger:
+            logger.warning(f"[AIMM-DB] store_ai_evaluation_if_absent failed: {exc}")
 
 
 def record_notification_event(

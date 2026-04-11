@@ -3,7 +3,10 @@ from collections import defaultdict
 from dataclasses import dataclass, fields
 from enum import Enum
 from logging import Logger
-from typing import Any, ClassVar, DefaultDict, List, Optional, Tuple, Type
+from typing import Any, ClassVar, DefaultDict, List, Optional, Tuple, Type, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .user import UserConfig
 
 import inflect
 
@@ -246,3 +249,36 @@ class PushNotificationConfig(NotificationConfig):
             if not self.send_message_with_retry(title, message, logger=logger):
                 return False
         return True
+
+
+def send_plain_alert(
+    user_config: "UserConfig",
+    title: str,
+    body: str,
+    logger: Logger | None = None,
+) -> bool:
+    """Send a plain title+body message through every configured channel for a user.
+
+    Mirrors the subclass-dispatch pattern used by NotificationConfig.notify_all but
+    calls send_message_with_retry directly instead of going through the full listing
+    notify pipeline.  Returns True if at least one channel succeeded.
+    """
+    sent: list[bool] = []
+    for subclass in NotificationConfig.__subclasses__():
+        if subclass.__name__ in ("UserConfig", "PushNotificationConfig"):
+            # UserConfig is the composite; PushNotificationConfig is a base with no send impl.
+            continue
+        flds = {f.name for f in fields(subclass)}
+        obj = subclass(**{k: getattr(user_config, k) for k in flds if hasattr(user_config, k)})
+        if callable(getattr(obj, "send_message_with_retry", None)):
+            sent.append(obj.send_message_with_retry(title, body, logger=logger))
+        # recurse into PushNotificationConfig subclasses (Telegram, Pushover, etc.)
+        if callable(getattr(subclass, "notify_all", None)):
+            for sub2 in subclass.__subclasses__():
+                if sub2.__name__ == "UserConfig":
+                    continue
+                flds2 = {f.name for f in fields(sub2)}
+                obj2 = sub2(**{k: getattr(user_config, k) for k in flds2 if hasattr(user_config, k)})
+                if callable(getattr(obj2, "send_message_with_retry", None)):
+                    sent.append(obj2.send_message_with_retry(title, body, logger=logger))
+    return any(sent)

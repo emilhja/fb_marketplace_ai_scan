@@ -18,7 +18,8 @@ from .config import Config, supported_ai_backends, supported_marketplaces
 from .listing import Listing
 from .marketplace import Marketplace, TItemConfig, TMarketplaceConfig
 from .notification import NotificationStatus
-from .pg_cache import observe_listing, record_notification_event
+from .notification import send_plain_alert
+from .pg_cache import fetch_listing_price_state, observe_listing, record_notification_event
 from .user import User
 from .utils import (
     CounterItem,
@@ -179,7 +180,54 @@ class MarketplaceMonitor:
                 if self.logger:
                     self.logger.debug(f"Found duplicated result for {listing}")
                 continue
+            # Read stored price BEFORE observe_listing upserts so we can detect the change.
+            price_state = fetch_listing_price_state(listing, logger=self.logger)
             observe_listing(listing, logger=self.logger)
+
+            # PG price gate — only active when the cache layer is enabled and listing was seen before.
+            if price_state.exists:
+                if price_state.previous_price == listing.price:
+                    if self.logger:
+                        self.logger.info(
+                            f"""{hilight("[Skip]", "info")} Already in database, no price change"""
+                            f""" for {hilight(listing.title)} ({listing.post_url.split("?")[0]})."""
+                        )
+                    continue
+                else:
+                    if self.logger:
+                        self.logger.info(
+                            f"""{hilight("[PriceChange]", "succ")} Price updated"""
+                            f""" {hilight(price_state.previous_price)} → {hilight(listing.price)}"""
+                            f""" for {hilight(listing.title)} ({listing.post_url.split("?")[0]})."""
+                        )
+                    url = listing.post_url.split("?")[0]
+                    alert_title = f"Price change: {listing.name or item_config.name}"
+                    alert_body = (
+                        f"{listing.title}\n"
+                        f"{price_state.previous_price} → {listing.price}, {listing.location}\n"
+                        f"{url}"
+                    )
+                    for user in users_to_notify:
+                        send_plain_alert(
+                            self.config.user[user],
+                            alert_title,
+                            alert_body,
+                            logger=self.logger,
+                        )
+                        record_notification_event(
+                            listing=listing,
+                            user_name=user,
+                            channel="price_alert",
+                            status="price_change",
+                            details={
+                                "previous_price": price_state.previous_price,
+                                "new_price": listing.price,
+                                "item": item_config.name,
+                            },
+                            logger=self.logger,
+                        )
+                    # Fall through to the AI evaluation below.
+
             # if everyone has been notified
             if all(
                 User(self.config.user[user], self.logger).notification_status(listing)
