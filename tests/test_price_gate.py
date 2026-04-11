@@ -185,10 +185,54 @@ class PriceGateIntegrationTests(unittest.TestCase):
 
         with patch("ai_marketplace_monitor.monitor.fetch_listing_price_state", return_value=unchanged_state), \
              patch("ai_marketplace_monitor.monitor.observe_listing"), \
+             patch(
+                 "ai_marketplace_monitor.monitor.has_any_ai_evaluation_for_listing",
+                 return_value=True,
+             ), \
              patch.object(monitor, "evaluate_by_ai") as mock_eval:
             monitor.search_item(marketplace_config, marketplace, item_config)
 
         mock_eval.assert_not_called()
+
+    def test_evaluate_when_price_unchanged_but_no_ai_history(self) -> None:
+        """Same price must still run AI when ai_evaluations has no row yet (backfill path)."""
+        from ai_marketplace_monitor.ai import AIResponse
+        from ai_marketplace_monitor.notification import NotificationStatus
+
+        monitor = self._make_monitor()
+        listing = _make_listing(price="5000")
+
+        marketplace_config = MagicMock()
+        marketplace_config.notify = None
+        marketplace_config.ai = None
+        marketplace_config.rating = None
+        item_config = MagicMock()
+        item_config.notify = None
+        item_config.name = "gpu"
+        item_config.searched_count = 0
+        item_config.rating = None
+        item_config.ai = None
+
+        marketplace = MagicMock()
+        marketplace.search.return_value = [listing]
+
+        unchanged_state = ListingPriceState(exists=True, previous_price="5000")
+        ai_response = AIResponse(score=4, comment="Good match", name="openrouter")
+
+        with patch("ai_marketplace_monitor.monitor.fetch_listing_price_state", return_value=unchanged_state), \
+             patch("ai_marketplace_monitor.monitor.observe_listing"), \
+             patch(
+                 "ai_marketplace_monitor.monitor.has_any_ai_evaluation_for_listing",
+                 return_value=False,
+             ), \
+             patch("ai_marketplace_monitor.monitor.User") as mock_user_cls, \
+             patch.object(monitor, "evaluate_by_ai", return_value=ai_response) as mock_eval:
+
+            mock_user_cls.return_value.notification_status.return_value = NotificationStatus.NOT_NOTIFIED
+
+            monitor.search_item(marketplace_config, marketplace, item_config)
+
+        mock_eval.assert_called_once()
 
     def test_alert_and_evaluate_when_price_changed(self) -> None:
         """When price changed, send_plain_alert is called and evaluate_by_ai proceeds."""

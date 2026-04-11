@@ -271,6 +271,33 @@ class ListingPriceState:
     previous_price: str | None  # None when listing not yet in DB
 
 
+def has_any_ai_evaluation_for_listing(listing: Listing, logger: Any = None) -> bool:
+    """True if PostgreSQL has at least one ai_evaluations row for this marketplace listing."""
+    if not cache_enabled():
+        return False
+    key = listing_key_from_listing(listing)
+    try:
+        ensure_database()
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM ai_evaluations e
+                        INNER JOIN listings l ON l.id = e.listing_id
+                        WHERE l.listing_key = %s
+                    );
+                    """,
+                    (key,),
+                )
+                row = cur.fetchone()
+        return bool(row and row[0])
+    except Exception as exc:  # pragma: no cover
+        if logger:
+            logger.debug(f"[AIMM-DB] has_any_ai_evaluation_for_listing failed: {exc}")
+        return False
+
+
 def fetch_listing_price_state(listing: Listing, logger: Any = None) -> ListingPriceState:
     """Return whether the listing exists in DB and what its stored price is, without writing."""
     if not cache_enabled():

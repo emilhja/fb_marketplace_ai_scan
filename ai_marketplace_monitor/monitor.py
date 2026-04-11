@@ -19,7 +19,12 @@ from .listing import Listing
 from .marketplace import Marketplace, TItemConfig, TMarketplaceConfig
 from .notification import NotificationStatus
 from .notification import send_plain_alert
-from .pg_cache import fetch_listing_price_state, observe_listing, record_notification_event
+from .pg_cache import (
+    fetch_listing_price_state,
+    has_any_ai_evaluation_for_listing,
+    observe_listing,
+    record_notification_event,
+)
 from .user import User
 from .utils import (
     CounterItem,
@@ -187,12 +192,20 @@ class MarketplaceMonitor:
             # PG price gate — only active when the cache layer is enabled and listing was seen before.
             if price_state.exists:
                 if price_state.previous_price == listing.price:
-                    if self.logger:
+                    # Listing row can exist from observe_listing without ai_evaluations (upgrade, or a
+                    # failed first persist). Do not skip AI until at least one evaluation is stored.
+                    if has_any_ai_evaluation_for_listing(listing, logger=self.logger):
+                        if self.logger:
+                            self.logger.info(
+                                f"""{hilight("[Skip]", "info")} Already in database, no price change"""
+                                f""" for {hilight(listing.title)} ({listing.post_url.split("?")[0]})."""
+                            )
+                        continue
+                    elif self.logger:
                         self.logger.info(
-                            f"""{hilight("[Skip]", "info")} Already in database, no price change"""
-                            f""" for {hilight(listing.title)} ({listing.post_url.split("?")[0]})."""
+                            f"""{hilight("[AI]", "info")} No PostgreSQL AI history for {hilight(listing.title)};"""
+                            f""" evaluating despite unchanged price."""
                         )
-                    continue
                 else:
                     if self.logger:
                         self.logger.info(
@@ -258,8 +271,13 @@ class MarketplaceMonitor:
                             f"""{hilight("[AI]", res.style)} No AI available to evaluate {hilight(listing.title)}."""
                         )
                 else:
+                    _aimm_cm = (
+                        f" [{hilight(res.response_model, 'name')}]"
+                        if getattr(res, "response_model", None)
+                        else ""
+                    )
                     self.logger.info(
-                        f"""{hilight("[AI]", res.style)} {res.name or "AI"} concludes {hilight(f"{res.conclusion} ({res.score}): {res.comment}", res.style)} for listing {hilight(listing.title)}."""
+                        f"""{hilight("[AI]", res.style)} {res.name or "AI"} concludes {hilight(f"{res.conclusion} ({res.score}): {res.comment}", res.style)} for listing {hilight(listing.title)}.{_aimm_cm}"""
                     )
             if item_config.rating:
                 acceptable_rating = item_config.rating[
@@ -295,7 +313,12 @@ class MarketplaceMonitor:
                     _aimm_u = _aimm_li.post_url.split("?")[0]
                     _aimm_tail = ""
                     if _aimm_rt.comment != AIResponse.NOT_EVALUATED:
-                        _aimm_tail = f" | {_aimm_rt.conclusion} ({_aimm_rt.score})"
+                        _aimm_rm = (
+                            f" [{_aimm_rt.response_model}]"
+                            if getattr(_aimm_rt, "response_model", None)
+                            else ""
+                        )
+                        _aimm_tail = f" | {_aimm_rt.conclusion} ({_aimm_rt.score}){_aimm_rm}"
                     _aimm_lines.append(
                         f"  {_aimm_li.title} | {_aimm_li.price} | {_aimm_u}{_aimm_tail}"
                     )
@@ -723,8 +746,13 @@ class MarketplaceMonitor:
                                 f"""{hilight("[AI]", rating.style)} No AI available to evaluate {hilight(listing.title)}."""
                             )
                     else:
+                        _aimm_cm = (
+                            f" [{hilight(rating.response_model, 'name')}]"
+                            if getattr(rating, "response_model", None)
+                            else ""
+                        )
                         self.logger.info(
-                            f"""{hilight("[AI]", rating.style)} {rating.name or "AI"} concludes {hilight(f"{rating.conclusion} ({rating.score}): {rating.comment}", rating.style)} for listing {hilight(listing.title)}."""
+                            f"""{hilight("[AI]", rating.style)} {rating.name or "AI"} concludes {hilight(f"{rating.conclusion} ({rating.score}): {rating.comment}", rating.style)} for listing {hilight(listing.title)}.{_aimm_cm}"""
                         )
                 # notification status?
                 users_to_notify = (
