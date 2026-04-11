@@ -4,8 +4,10 @@
 Run from run.sh after venv activate. Safe to run every time (idempotent).
 
 Patches:
- 1. monitor.py — sleep AIMM_AI_DELAY_SECONDS after each evaluate_by_ai (OpenRouter pacing).
+ 1. monitor.py — sleep AIMM_AI_DELAY_SECONDS after each evaluate_by_ai (OpenRouter pacing);
+    compact “[found] …” lines on stderr (AIMM_PRINT_FOUND=0 to disable).
  2. ai.py — reject empty api_key; fix NameError when all retries fail (response unset).
+ 3. facebook.py — log search failure only when no listings; optional manual-search fallback.
 """
 from __future__ import annotations
 
@@ -14,7 +16,9 @@ import sys
 from pathlib import Path
 
 SENTINEL_MONITOR = "facebook_marketplace_scan_patch: ai_delay"
+SENTINEL_TERMINAL_FOUND = "facebook_marketplace_scan_patch: terminal_found"
 SENTINEL_AI = "facebook_marketplace_scan_patch: ai_retry"
+SENTINEL_FACEBOOK = "facebook_marketplace_scan_patch: manual_search_fallback"
 
 
 def package_dir() -> Path:
@@ -88,6 +92,89 @@ def patch_monitor(monitor_py: Path) -> bool:
 
     monitor_py.write_text(text, encoding="utf-8")
     print("monitor.py: applied ai_delay patch(es)")
+    return True
+
+
+# Previous verbose terminal_found patch (replaced by compact lines when present).
+_OLD_TERMINAL_FOUND_VERBOSE = """        if new_listings:
+            # facebook_marketplace_scan_patch: terminal_found Plain summary on stderr. Set AIMM_PRINT_FOUND=0 to disable.
+            _aimm_pf = __import__("os").environ.get("AIMM_PRINT_FOUND", "1").strip().lower()
+            if _aimm_pf not in ("0", "false", "no", "off"):
+                _aimm_sys = __import__("sys")
+                _aimm_parts = [
+                    "",
+                    f"=== Found {len(new_listings)} listing(s) for {item_config.name!r} ===",
+                ]
+                for _aimm_li, _aimm_rt in zip(new_listings, listing_ratings):
+                    _aimm_url = _aimm_li.post_url.split("?")[0]
+                    _aimm_parts.extend(
+                        [
+                            f"  • {_aimm_li.title}",
+                            f"    {_aimm_li.price}, {_aimm_li.location}",
+                            f"    {_aimm_url}",
+                        ]
+                    )
+                    if _aimm_rt.comment != AIResponse.NOT_EVALUATED:
+                        _aimm_parts.append(
+                            f"    AI: {_aimm_rt.conclusion} ({_aimm_rt.score}) — {_aimm_rt.comment}"
+                        )
+                print("\\n".join(_aimm_parts), file=_aimm_sys.stderr, flush=True)
+            counter.increment(
+                CounterItem.NEW_VALIDATED_LISTING, item_config.name, len(new_listings)
+            )
+"""
+
+
+def _terminal_found_compact_block() -> str:
+    return f"""        if new_listings:
+            # {SENTINEL_TERMINAL_FOUND} stderr: [found] + one line per hit (title | price | url). AIMM_PRINT_FOUND=0 off.
+            _aimm_pf = __import__("os").environ.get("AIMM_PRINT_FOUND", "1").strip().lower()
+            if _aimm_pf not in ("0", "false", "no", "off"):
+                _aimm_sys = __import__("sys")
+                _aimm_lines = [f"[found] {{item_config.name}}: {{len(new_listings)}} listing(s)"]
+                for _aimm_li, _aimm_rt in zip(new_listings, listing_ratings):
+                    _aimm_u = _aimm_li.post_url.split("?")[0]
+                    _aimm_tail = ""
+                    if _aimm_rt.comment != AIResponse.NOT_EVALUATED:
+                        _aimm_tail = f" | {{_aimm_rt.conclusion}} ({{_aimm_rt.score}})"
+                    _aimm_lines.append(
+                        f"  {{_aimm_li.title}} | {{_aimm_li.price}} | {{_aimm_u}}{{_aimm_tail}}"
+                    )
+                print("\\n".join(_aimm_lines), file=_aimm_sys.stderr, flush=True)
+            counter.increment(
+                CounterItem.NEW_VALIDATED_LISTING, item_config.name, len(new_listings)
+            )
+"""
+
+
+def patch_terminal_found(monitor_py: Path) -> bool:
+    """Print compact stderr lines when matches pass the AI threshold."""
+    text = monitor_py.read_text(encoding="utf-8")
+    compact = _terminal_found_compact_block()
+    vanilla = """        if new_listings:
+            counter.increment(
+                CounterItem.NEW_VALIDATED_LISTING, item_config.name, len(new_listings)
+            )"""
+
+    if SENTINEL_TERMINAL_FOUND in text and "_aimm_lines" in text:
+        print("monitor.py: terminal_found already patched")
+        return True
+
+    if _OLD_TERMINAL_FOUND_VERBOSE in text:
+        monitor_py.write_text(text.replace(_OLD_TERMINAL_FOUND_VERBOSE, compact, 1), encoding="utf-8")
+        print("monitor.py: upgraded terminal_found to compact stderr lines")
+        return True
+
+    if vanilla not in text:
+        print(
+            "monitor.py: terminal_found needle not found; upgrade ai-marketplace-monitor and "
+            "update scripts/apply_ai_marketplace_monitor_patches.py",
+            file=sys.stderr,
+        )
+        return False
+
+    monitor_py.write_text(text.replace(vanilla, compact, 1), encoding="utf-8")
+    print("monitor.py: applied terminal_found (compact stderr) patch")
     return True
 
 
@@ -273,9 +360,100 @@ def patch_ai(ai_py: Path) -> bool:
     return True
 
 
+# Vanilla ai-marketplace-monitor facebook.py search loop fragment (0.9.x).
+_FACEBOOK_SEARCH_BLOCK_OLD = (
+    "                found_listings = FacebookSearchResultPage(\n"
+    "                    self.page, self.translator, self.logger\n"
+    "                ).get_listings()\n"
+    "                time.sleep(5)\n"
+    "                if self.logger:\n"
+    "                    self.logger.error(\n"
+    '                        f"""{hilight("[Search]", "fail")} Failed to get search results for {search_phrase} from {city}"""\n'
+    "                    )\n"
+    "\n"
+    "                counter.increment(CounterItem.SEARCH_PERFORMED, item_config.name)"
+)
+
+
+def _facebook_search_block_new() -> str:
+    return (
+        "                found_listings = FacebookSearchResultPage(\n"
+        "                    self.page, self.translator, self.logger\n"
+        "                ).get_listings()\n"
+        "                time.sleep(5)\n"
+        f"                # {SENTINEL_FACEBOOK} (set AIMM_MANUAL_SEARCH_FALLBACK=1 to prompt when zero listings)\n"
+        "                _manual_fb = (\n"
+        "                    __import__(\"os\")\n"
+        "                    .environ.get(\"AIMM_MANUAL_SEARCH_FALLBACK\", \"\")\n"
+        "                    .strip()\n"
+        "                    .lower()\n"
+        "                    in (\"1\", \"true\", \"yes\")\n"
+        "                )\n"
+        "                if not found_listings and _manual_fb:\n"
+        "                    _sys_fb = __import__(\"sys\")\n"
+        "                    _fb_msg = (\n"
+        '                        "[Search] Parsed zero listings from the automated Marketplace URL. "\n'
+        '                        f"phrase={search_phrase!r} city={city!r}. "\n'
+        '                        "In the Playwright browser, run the search manually until result cards show, "\n'
+        '                        "then press Enter here to re-parse the current page."\n'
+        "                    )\n"
+        "                    if self.logger:\n"
+        "                        self.logger.warning(_fb_msg)\n"
+        "                    elif _sys_fb.stdout.isatty():\n"
+        '                        print("\\n" + _fb_msg + "\\n", file=_sys_fb.stderr)\n'
+        "                    try:\n"
+        "                        if _sys_fb.stdin.isatty():\n"
+        '                            input("Press Enter after results are visible... ")\n'
+        "                    except EOFError:\n"
+        "                        pass\n"
+        "                    found_listings = FacebookSearchResultPage(\n"
+        "                        self.page, self.translator, self.logger\n"
+        "                    ).get_listings()\n"
+        "                    time.sleep(5)\n"
+        "                if not found_listings:\n"
+        "                    if self.logger:\n"
+        "                        self.logger.error(\n"
+        '                            f"""{hilight("[Search]", "fail")} Failed to get search results for {search_phrase} from {city}"""\n'
+        "                        )\n"
+        "                elif self.logger:\n"
+        "                    self.logger.info(\n"
+        '                        f"""{hilight("[Search]", "succ")} Got {len(found_listings)} search result(s) for {search_phrase} from {city}"""\n'
+        "                    )\n"
+        "\n"
+        "                counter.increment(CounterItem.SEARCH_PERFORMED, item_config.name)"
+    )
+
+
+def patch_facebook(facebook_py: Path) -> bool:
+    text = facebook_py.read_text(encoding="utf-8")
+    if SENTINEL_FACEBOOK in text:
+        print("facebook.py: already patched")
+        return True
+
+    old = _FACEBOOK_SEARCH_BLOCK_OLD
+    new = _facebook_search_block_new()
+    if old not in text:
+        print(
+            "facebook.py: search block not found; upgrade ai-marketplace-monitor and "
+            "update scripts/apply_ai_marketplace_monitor_patches.py",
+            file=sys.stderr,
+        )
+        return False
+
+    facebook_py.write_text(text.replace(old, new, 1), encoding="utf-8")
+    print("facebook.py: applied manual-search + conditional search-error log")
+    return True
+
+
 def main() -> None:
     root = package_dir()
-    if not patch_monitor(root / "monitor.py") or not patch_ai(root / "ai.py"):
+    monitor = root / "monitor.py"
+    if (
+        not patch_monitor(monitor)
+        or not patch_terminal_found(monitor)
+        or not patch_ai(root / "ai.py")
+        or not patch_facebook(root / "facebook.py")
+    ):
         sys.exit(1)
 
 
