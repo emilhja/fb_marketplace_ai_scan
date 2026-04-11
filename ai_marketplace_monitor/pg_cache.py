@@ -26,6 +26,8 @@ class CachedAIResult:
     comment: str
     model: str
     reason: str
+    # Actual completion model from the API (e.g. OpenRouter-routed id); may be NULL in old DB rows.
+    response_model: str | None = None
 
 
 def _truthy(value: str | None, default: bool = False) -> bool:
@@ -161,11 +163,32 @@ def ensure_database() -> bool:
                     title TEXT NOT NULL,
                     current_price TEXT NOT NULL,
                     last_content_hash TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    location TEXT NOT NULL DEFAULT '',
+                    skick TEXT NOT NULL DEFAULT '',
                     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE listings
+                ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE listings
+                ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT '';
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE listings
+                ADD COLUMN IF NOT EXISTS skick TEXT NOT NULL DEFAULT '';
                 """
             )
             cur.execute(
@@ -210,6 +233,12 @@ def ensure_database() -> bool:
                 ON ai_evaluations (
                     listing_id, model, item_config_hash, marketplace_config_hash, prompt_version, prompt_hash, evaluated_at DESC
                 );
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE ai_evaluations
+                ADD COLUMN IF NOT EXISTS response_model TEXT;
                 """
             )
             cur.execute(
@@ -279,14 +308,18 @@ def _upsert_listing(cur: Any, listing: Listing) -> int:
         """
         INSERT INTO listings (
             listing_key, marketplace, marketplace_listing_id, canonical_post_url,
-            title, current_price, last_content_hash
+            title, current_price, last_content_hash,
+            description, location, skick
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (listing_key)
         DO UPDATE SET
             title = EXCLUDED.title,
             current_price = EXCLUDED.current_price,
             last_content_hash = EXCLUDED.last_content_hash,
+            description = EXCLUDED.description,
+            location = EXCLUDED.location,
+            skick = EXCLUDED.skick,
             last_seen_at = NOW(),
             updated_at = NOW()
         RETURNING id;
@@ -299,6 +332,9 @@ def _upsert_listing(cur: Any, listing: Listing) -> int:
             listing.title,
             listing.price,
             listing_content_hash(listing),
+            listing.description or "",
+            listing.location or "",
+            listing.condition or "",
         ),
     )
     internal_id = int(cur.fetchone()[0])
@@ -349,7 +385,8 @@ def get_cached_ai_response(
                 listing_id = _upsert_listing(cur, listing)
                 cur.execute(
                     """
-                    SELECT score, conclusion, comment, listing_price, content_hash, evaluated_at
+                    SELECT score, conclusion, comment, listing_price, content_hash, evaluated_at,
+                           response_model
                     FROM ai_evaluations
                     WHERE listing_id = %s
                       AND model = %s
@@ -376,7 +413,7 @@ def get_cached_ai_response(
                 logger.info("[AIMM-DB] ai_cache_miss reason=no_previous_eval")
             return None
 
-        score, conclusion, comment, prev_price, prev_hash, evaluated_at = row
+        score, conclusion, comment, prev_price, prev_hash, evaluated_at, resp_model = row
         can_reuse, reason = should_reuse_evaluation(
             previous_price=str(prev_price or ""),
             previous_content_hash=str(prev_hash or ""),
@@ -394,12 +431,14 @@ def get_cached_ai_response(
 
         if logger:
             logger.info(f"[AIMM-DB] ai_cache_hit reason={reason}")
+        rm = resp_model if isinstance(resp_model, str) and resp_model.strip() else None
         return CachedAIResult(
             score=int(score),
             conclusion=str(conclusion or ""),
             comment=str(comment or ""),
             model=model,
             reason=reason,
+            response_model=rm,
         )
     except Exception as exc:  # pragma: no cover
         if logger:
@@ -417,6 +456,7 @@ def store_ai_evaluation(
     score: int,
     conclusion: str,
     comment: str,
+    response_model: str | None = None,
     logger: Any = None,
 ) -> None:
     if not cache_enabled():
@@ -430,9 +470,9 @@ def store_ai_evaluation(
                     """
                     INSERT INTO ai_evaluations (
                         listing_id, model, item_config_hash, marketplace_config_hash, prompt_version, prompt_hash,
-                        listing_price, content_hash, score, conclusion, comment, evaluated_at
+                        listing_price, content_hash, score, conclusion, comment, response_model, evaluated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW());
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW());
                     """,
                     (
                         listing_id,
@@ -446,6 +486,7 @@ def store_ai_evaluation(
                         score,
                         conclusion,
                         comment,
+                        response_model,
                     ),
                 )
             conn.commit()
@@ -466,6 +507,7 @@ def store_ai_evaluation_if_absent(
     score: int,
     conclusion: str,
     comment: str,
+    response_model: str | None = None,
     logger: Any = None,
 ) -> None:
     """Persist one AI row when missing (e.g. result served from disk cache after PG was enabled)."""
@@ -504,9 +546,9 @@ def store_ai_evaluation_if_absent(
                     """
                     INSERT INTO ai_evaluations (
                         listing_id, model, item_config_hash, marketplace_config_hash, prompt_version, prompt_hash,
-                        listing_price, content_hash, score, conclusion, comment, evaluated_at
+                        listing_price, content_hash, score, conclusion, comment, response_model, evaluated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW());
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW());
                     """,
                     (
                         listing_id,
@@ -520,6 +562,7 @@ def store_ai_evaluation_if_absent(
                         score,
                         conclusion,
                         comment,
+                        response_model,
                     ),
                 )
             conn.commit()
