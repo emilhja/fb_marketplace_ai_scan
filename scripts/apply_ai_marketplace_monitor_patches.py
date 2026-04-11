@@ -5,8 +5,10 @@ Run from run.sh after venv activate. Safe to run every time (idempotent).
 
 Patches:
  1. monitor.py — sleep AIMM_AI_DELAY_SECONDS after each evaluate_by_ai (OpenRouter pacing);
-    compact “[found] …” lines on stderr (AIMM_PRINT_FOUND=0 to disable).
- 2. ai.py — reject empty api_key; fix NameError when all retries fail (response unset).
+    compact “[found] …” lines on stderr (AIMM_PRINT_FOUND=0 to disable);
+    PostgreSQL listing/notification event hooks.
+ 2. ai.py — reject empty api_key; fix NameError when all retries fail (response unset);
+    PostgreSQL AI dedupe/cache hooks.
  3. facebook.py — log search failure only when no listings; optional manual-search fallback.
 """
 from __future__ import annotations
@@ -19,6 +21,9 @@ SENTINEL_MONITOR = "facebook_marketplace_scan_patch: ai_delay"
 SENTINEL_TERMINAL_FOUND = "facebook_marketplace_scan_patch: terminal_found"
 SENTINEL_AI = "facebook_marketplace_scan_patch: ai_retry"
 SENTINEL_FACEBOOK = "facebook_marketplace_scan_patch: manual_search_fallback"
+SENTINEL_PG_OBSERVE = "facebook_marketplace_scan_patch: pg_listing_observe"
+SENTINEL_PG_AI = "facebook_marketplace_scan_patch: pg_ai_dedupe"
+SENTINEL_PG_NOTIFY = "facebook_marketplace_scan_patch: pg_notify_event"
 
 
 def package_dir() -> Path:
@@ -175,6 +180,78 @@ def patch_terminal_found(monitor_py: Path) -> bool:
 
     monitor_py.write_text(text.replace(vanilla, compact, 1), encoding="utf-8")
     print("monitor.py: applied terminal_found (compact stderr) patch")
+    return True
+
+
+def patch_monitor_db(monitor_py: Path) -> bool:
+    """Add listing-observe + notification-event hooks."""
+    text = monitor_py.read_text(encoding="utf-8")
+    original = text
+
+    observe_needle = "            # if everyone has been notified"
+    observe_block = f"""            # {SENTINEL_PG_OBSERVE} observe listing identity/price in PostgreSQL (best effort).
+            try:
+                __import__("fbm_pg_cache").observe_listing(listing, logger=self.logger)
+            except Exception:
+                pass
+{observe_needle}"""
+
+    notify_vanilla = """            for user in users_to_notify:
+                User(self.config.user[user], logger=self.logger).notify(
+                    new_listings, listing_ratings, item_config
+                )"""
+    notify_new = f"""            for user in users_to_notify:
+                _u = User(self.config.user[user], logger=self.logger)
+                try:
+                    _u.notify(new_listings, listing_ratings, item_config)
+                    try:
+                        for _li in new_listings:
+                            __import__("fbm_pg_cache").record_notification_event(
+                                listing=_li,
+                                user_name=user,
+                                channel=_u.config.notify_with[0] if _u.config.notify_with else "unknown",
+                                status="sent",
+                                details={{"count": len(new_listings), "item": item_config.name}},
+                                logger=self.logger,
+                            )
+                    except Exception:
+                        pass
+                except Exception:
+                    try:
+                        for _li in new_listings:
+                            __import__("fbm_pg_cache").record_notification_event(
+                                listing=_li,
+                                user_name=user,
+                                channel=_u.config.notify_with[0] if _u.config.notify_with else "unknown",
+                                status="failed",
+                                details={{"count": len(new_listings), "item": item_config.name}},
+                                logger=self.logger,
+                            )
+                    except Exception:
+                        pass
+                    raise
+            # {SENTINEL_PG_NOTIFY}
+"""
+
+    if SENTINEL_PG_OBSERVE not in text and observe_needle in text:
+        text = text.replace(observe_needle, observe_block, 1)
+
+    if SENTINEL_PG_NOTIFY not in text and notify_vanilla in text:
+        text = text.replace(notify_vanilla, notify_new, 1)
+
+    if text == original:
+        if SENTINEL_PG_OBSERVE in text and SENTINEL_PG_NOTIFY in text:
+            print("monitor.py: postgres hooks already patched")
+            return True
+        print(
+            "monitor.py: postgres hook needle not found; upgrade ai-marketplace-monitor and "
+            "update scripts/apply_ai_marketplace_monitor_patches.py",
+            file=sys.stderr,
+        )
+        return False
+
+    monitor_py.write_text(text, encoding="utf-8")
+    print("monitor.py: applied postgres observe/notify hooks")
     return True
 
 
@@ -360,6 +437,76 @@ def patch_ai(ai_py: Path) -> bool:
     return True
 
 
+def patch_ai_pg(ai_py: Path) -> bool:
+    """Add PostgreSQL-backed AI dedupe gate and persistence."""
+    text = ai_py.read_text(encoding="utf-8")
+    original = text
+
+    cache_needle = """        prompt = self.get_prompt(listing, item_config, marketplace_config)
+        res: AIResponse | None = AIResponse.from_cache(listing, item_config, marketplace_config)"""
+    cache_new = f"""        prompt = self.get_prompt(listing, item_config, marketplace_config)
+        # {SENTINEL_PG_AI} check PostgreSQL cache first (best effort).
+        _pg_cached = None
+        try:
+            _pg_cached = __import__("fbm_pg_cache").get_cached_ai_response(
+                listing=listing,
+                model=self.config.model or self.default_model,
+                prompt=prompt,
+                logger=self.logger,
+            )
+        except Exception:
+            _pg_cached = None
+        if _pg_cached is not None:
+            return AIResponse(
+                name=str(_pg_cached.get("name") or self.config.name),
+                score=int(_pg_cached["score"]),
+                comment=str(_pg_cached.get("comment", "")),
+            )
+        res: AIResponse | None = AIResponse.from_cache(listing, item_config, marketplace_config)"""
+
+    save_needle = """        res = AIResponse(name=self.config.name, score=score, comment=comment)
+        res.to_cache(listing, item_config, marketplace_config)
+        counter.increment(CounterItem.NEW_AI_QUERY, item_config.name)
+        return res"""
+    save_new = """        res = AIResponse(name=self.config.name, score=score, comment=comment)
+        res.to_cache(listing, item_config, marketplace_config)
+        try:
+            __import__("fbm_pg_cache").store_ai_evaluation(
+                listing=listing,
+                model=self.config.model or self.default_model,
+                prompt=prompt,
+                score=res.score,
+                conclusion=res.conclusion,
+                comment=res.comment,
+                logger=self.logger,
+            )
+        except Exception:
+            pass
+        counter.increment(CounterItem.NEW_AI_QUERY, item_config.name)
+        return res"""
+
+    if SENTINEL_PG_AI not in text and cache_needle in text:
+        text = text.replace(cache_needle, cache_new, 1)
+
+    if SENTINEL_PG_AI not in text and save_needle in text:
+        text = text.replace(save_needle, save_new, 1)
+
+    if text == original:
+        if SENTINEL_PG_AI in text:
+            print("ai.py: postgres AI dedupe already patched")
+            return True
+        print(
+            "ai.py: postgres AI dedupe needles not found; upgrade ai-marketplace-monitor and "
+            "update scripts/apply_ai_marketplace_monitor_patches.py",
+            file=sys.stderr,
+        )
+        return False
+
+    ai_py.write_text(text, encoding="utf-8")
+    print("ai.py: applied postgres AI dedupe/persist hooks")
+    return True
+
+
 # Vanilla ai-marketplace-monitor facebook.py search loop fragment (0.9.x).
 _FACEBOOK_SEARCH_BLOCK_OLD = (
     "                found_listings = FacebookSearchResultPage(\n"
@@ -445,13 +592,69 @@ def patch_facebook(facebook_py: Path) -> bool:
     return True
 
 
+def verify_patch_targets(root: Path) -> bool:
+    """Fail fast if upstream signatures drift too far for safe patching."""
+    monitor = (root / "monitor.py").read_text(encoding="utf-8")
+    ai = (root / "ai.py").read_text(encoding="utf-8")
+    facebook = (root / "facebook.py").read_text(encoding="utf-8")
+
+    checks: list[tuple[bool, str]] = [
+        (
+            SENTINEL_MONITOR in monitor
+            or "res = self.evaluate_by_ai(" in monitor
+            or "rating = self.evaluate_by_ai(" in monitor,
+            "monitor.py evaluate_by_ai call sites",
+        ),
+        (
+            SENTINEL_TERMINAL_FOUND in monitor
+            or "CounterItem.NEW_VALIDATED_LISTING, item_config.name, len(new_listings)" in monitor,
+            "monitor.py new_listings counter block",
+        ),
+        (
+            SENTINEL_PG_OBSERVE in monitor or "# if everyone has been notified" in monitor,
+            "monitor.py listing observation insertion point",
+        ),
+        (
+            SENTINEL_AI in ai
+            or "class OpenAIConfig(AIConfig):" in ai
+            or "response = self.client.chat.completions.create(" in ai,
+            "ai.py OpenAI config/retry blocks",
+        ),
+        (
+            SENTINEL_PG_AI in ai
+            or "res: AIResponse | None = AIResponse.from_cache(listing, item_config, marketplace_config)"
+            in ai,
+            "ai.py AI cache insertion point",
+        ),
+        (
+            SENTINEL_FACEBOOK in facebook
+            or "Failed to get search results for {search_phrase} from {city}" in facebook,
+            "facebook.py search parser block",
+        ),
+    ]
+    failed = [name for ok, name in checks if not ok]
+    if failed:
+        print(
+            "Patch verification failed. Upstream signatures changed for: "
+            + ", ".join(failed)
+            + ". Pin ai-marketplace-monitor to a known version or update patch script needles.",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 def main() -> None:
     root = package_dir()
     monitor = root / "monitor.py"
+    if not verify_patch_targets(root):
+        sys.exit(1)
     if (
         not patch_monitor(monitor)
         or not patch_terminal_found(monitor)
+        or not patch_monitor_db(monitor)
         or not patch_ai(root / "ai.py")
+        or not patch_ai_pg(root / "ai.py")
         or not patch_facebook(root / "facebook.py")
     ):
         sys.exit(1)

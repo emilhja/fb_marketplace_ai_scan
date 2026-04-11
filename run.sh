@@ -11,7 +11,9 @@ fi
 
 source "$SCRIPT_DIR/.venv/bin/activate"
 
-python3 "$SCRIPT_DIR/scripts/apply_ai_marketplace_monitor_patches.py"
+export PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+
+python3 "$SCRIPT_DIR/scripts/init_postgres_cache.py"
 
 # Esc to skip the Facebook login wait uses pynput (global key listener). Under Wayland
 # or some terminals it may not fire; the shell may only echo ^[. Then either wait the
@@ -20,4 +22,4 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
     echo "ai-marketplace-monitor: Wayland detected — Esc may not end the login wait; use a shorter login_wait_time if needed." >&2
 fi
 
-ai-marketplace-monitor "$@"
+python3 -m ai_marketplace_monitor.cli "$@"
