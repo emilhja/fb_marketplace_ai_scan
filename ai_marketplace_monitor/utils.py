@@ -532,20 +532,63 @@ def doze(
             observer.join()
 
 
+def _normalize_monetary_amount_single(fragment: str) -> str | None:
+    """Parse one price fragment into digits with at most one decimal point, or None."""
+    s = fragment.strip().replace("\u202f", " ").replace("\xa0", " ")
+    if not s:
+        return None
+    s = re.sub(r"[A-Za-zåäöÅÄÖ]+", " ", s, flags=re.I)
+    s = re.sub(r"[^\d\s,.$€£+]", "", s)
+    s = s.strip()
+    s = re.sub(r"^[\s$€£+]+|[\s$€£+]+$", "", s)
+    if not re.search(r"\d", s):
+        return None
+    t = s
+    while True:
+        n = re.sub(r"(\d)\s+(?=\d{3}\b)", r"\1", t)
+        if n == t:
+            break
+        t = n
+    t = re.sub(r"\s+", "", t)
+    if not t:
+        return None
+    if "," in t and "." in t:
+        if t.rfind(",") > t.rfind("."):
+            t = t.replace(".", "")
+            t = t.replace(",", ".")
+        else:
+            t = t.replace(",", "")
+    elif "," in t:
+        parts = t.split(",")
+        if len(parts) == 2 and len(parts[1]) <= 2 and parts[1].isdigit():
+            t = f"{parts[0]}.{parts[1]}"
+        else:
+            t = "".join(parts)
+    elif "." in t:
+        parts = t.split(".")
+        if len(parts) == 2 and len(parts[1]) <= 2 and parts[1].isdigit():
+            pass
+        elif len(parts) >= 2 and parts[-1].isdigit() and all(len(p) == 3 for p in parts[1:]):
+            t = "".join(parts)
+        elif len(parts) == 2 and len(parts[1]) == 3 and parts[1].isdigit():
+            t = "".join(parts)
+        elif len(parts) > 2:
+            t = "".join(parts)
+    if re.fullmatch(r"\d+(?:\.\d+)?", t):
+        return t
+    if re.fullmatch(r"\d+", t):
+        return t
+    return None
+
+
 def extract_price(price: str) -> str:
     if not price or price == "**unspecified**":
         return price
-
-    # extract leading non-numeric characters as currency symbol
-    matched = re.match(r"(\D*)\d+", price)
-    if matched:
-        currency = matched.group(1).strip()
-    else:
-        currency = "$"
-
-    matches = re.findall(currency.replace("$", r"\$") + r"[\d,]+(?:\.\d+)?", price)
-    if matches:
-        return " | ".join(matches[:2])
+    raw = price.strip()
+    for part in re.split(r"\s*[-–—]\s*", raw):
+        normalized = _normalize_monetary_amount_single(part)
+        if normalized is not None:
+            return normalized
     return price
 
 
