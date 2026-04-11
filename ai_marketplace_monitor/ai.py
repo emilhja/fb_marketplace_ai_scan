@@ -26,6 +26,8 @@ class AIResponse:
     score: int
     comment: str
     name: str = ""
+    # Provider-reported model id for this completion (e.g. OpenRouter routed model for `openrouter/free`).
+    response_model: str | None = None
 
     NOT_EVALUATED: ClassVar = "Not evaluated by AI"
 
@@ -71,7 +73,9 @@ class AIResponse:
         )
         if res is None:
             return None
-        return AIResponse(**res)
+        data = dict(res)
+        data.setdefault("response_model", None)
+        return AIResponse(**data)
 
     def to_cache(
         self: "AIResponse",
@@ -199,9 +203,14 @@ class AIBackend(Generic[TAIConfig]):
         if item_config.antikeywords:
             prompt += f"""Exclude keywords "{'" and "'.join(item_config.antikeywords)}" in title or description."""
         #
+        price_clause = (
+            f"{listing.price} (originally listed at {listing.original_price})"
+            if listing.original_price
+            else listing.price
+        )
         prompt += (
             f"""\n\nThe user found a listing titled "{listing.title}" in {listing.condition} condition, """
-            f"""priced at {listing.price}, located in {listing.location}, """
+            f"""priced at {price_clause}, located in {listing.location}, """
             f"""posted at {listing.post_url} with description "{listing.description}"\n\n"""
         )
         # prompt
@@ -295,6 +304,7 @@ class OpenAIBackend(AIBackend):
                 name=self.config.name,
                 score=pg_cached.score,
                 comment=pg_cached.comment,
+                response_model=pg_cached.response_model,
             )
         res: AIResponse | None = AIResponse.from_cache(listing, item_config, marketplace_config)
         if res is not None:
@@ -312,6 +322,7 @@ class OpenAIBackend(AIBackend):
                 score=res.score,
                 conclusion=res.conclusion,
                 comment=res.comment,
+                response_model=res.response_model,
                 logger=self.logger,
             )
             return res
@@ -365,6 +376,10 @@ class OpenAIBackend(AIBackend):
         if self.logger:
             self.logger.debug(f"""{hilight("[AI-Response]", "info")} {pretty_repr(response)}""")
 
+        resolved_model = getattr(response, "model", None) or None
+        if isinstance(resolved_model, str) and not resolved_model.strip():
+            resolved_model = None
+
         answer = response.choices[0].message.content or ""
         if (
             answer is None
@@ -395,7 +410,12 @@ class OpenAIBackend(AIBackend):
 
         # remove multiple spaces, take first 30 words
         comment = " ".join([x for x in comment.split() if x.strip()]).strip()
-        res = AIResponse(name=self.config.name, score=score, comment=comment)
+        res = AIResponse(
+            name=self.config.name,
+            score=score,
+            comment=comment,
+            response_model=resolved_model,
+        )
         res.to_cache(listing, item_config, marketplace_config)
         store_ai_evaluation(
             listing=listing,
@@ -406,6 +426,7 @@ class OpenAIBackend(AIBackend):
             score=res.score,
             conclusion=res.conclusion,
             comment=res.comment,
+            response_model=resolved_model,
             logger=self.logger,
         )
         counter.increment(CounterItem.NEW_AI_QUERY, item_config.name)

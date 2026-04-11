@@ -20,6 +20,8 @@ class Listing:
     seller: str
     condition: str
     description: str
+    # crossed-out / "was" price when the UI shows two amounts (normalized digits, same as price)
+    original_price: str = ""
 
     @property
     def content(self: "Listing") -> Tuple[str, str, str]:

@@ -532,8 +532,8 @@ def doze(
             observer.join()
 
 
-def _normalize_monetary_amount_single(fragment: str) -> str | None:
-    """Parse one price fragment into digits with at most one decimal point, or None."""
+def _prepare_price_numeric_text(fragment: str) -> str | None:
+    """Strip to digits, grouping spaces, and common currency symbols; None if no digits."""
     s = fragment.strip().replace("\u202f", " ").replace("\xa0", " ")
     if not s:
         return None
@@ -542,6 +542,14 @@ def _normalize_monetary_amount_single(fragment: str) -> str | None:
     s = s.strip()
     s = re.sub(r"^[\s$€£+]+|[\s$€£+]+$", "", s)
     if not re.search(r"\d", s):
+        return None
+    return s
+
+
+def _normalize_monetary_amount_single(fragment: str) -> str | None:
+    """Parse one price fragment into digits with at most one decimal point, or None."""
+    s = _prepare_price_numeric_text(fragment)
+    if s is None:
         return None
     t = s
     while True:
@@ -581,15 +589,43 @@ def _normalize_monetary_amount_single(fragment: str) -> str | None:
     return None
 
 
-def extract_price(price: str) -> str:
+# First amount using spaced thousands (e.g. Swedish "10 000"), before a second price
+# such as a strikethrough "17 999" in the same scraped string.
+_SWEDISH_STYLE_SPACED_AMOUNT = re.compile(
+    r"\d{1,3}(?:\s+\d{3})+(?:\s*[.,]\d{1,2})?"
+)
+
+
+def parse_listing_prices(price: str) -> tuple[str, str]:
+    """Parse current and optional original (e.g. crossed-out) price from one scraped string.
+
+    Returns ``(current, original)`` as normalized digit strings; ``original`` is ``""`` if absent.
+    """
     if not price or price == "**unspecified**":
-        return price
+        return price, ""
     raw = price.strip()
     for part in re.split(r"\s*[-–—]\s*", raw):
-        normalized = _normalize_monetary_amount_single(part)
-        if normalized is not None:
-            return normalized
-    return price
+        prep = _prepare_price_numeric_text(part)
+        if prep is None:
+            continue
+        swedish = list(_SWEDISH_STYLE_SPACED_AMOUNT.finditer(prep))
+        if len(swedish) >= 2:
+            current = _normalize_monetary_amount_single(swedish[0].group(0))
+            original = _normalize_monetary_amount_single(swedish[1].group(0))
+            if current is not None:
+                return current, original or ""
+        if len(swedish) == 1:
+            current = _normalize_monetary_amount_single(swedish[0].group(0))
+            if current is not None:
+                return current, ""
+        current = _normalize_monetary_amount_single(part)
+        if current is not None:
+            return current, ""
+    return price, ""
+
+
+def extract_price(price: str) -> str:
+    return parse_listing_prices(price)[0]
 
 
 def convert_to_seconds(time_str: str) -> int:

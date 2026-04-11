@@ -25,8 +25,8 @@ from .utils import (
     convert_to_seconds,
     counter,
     doze,
-    extract_price,
     hilight,
+    parse_listing_prices,
     is_substring,
 )
 
@@ -556,6 +556,7 @@ class FacebookMarketplace(Marketplace):
                     for attr in ("condition", "seller", "description"):
                         # other attributes should be consistent
                         setattr(listing, attr, getattr(details, attr))
+                    listing.original_price = details.original_price or listing.original_price
                     listing.name = item_config.name
                     if self.logger:
                         self.logger.debug(
@@ -780,7 +781,7 @@ class FacebookSearchResultPage(WebPage):
                 # get image
                 img = listing.query_selector("img")
                 image = img.get_attribute("src") if img else ""
-                price = extract_price(raw_price)
+                price, original_price = parse_listing_prices(raw_price)
 
                 if post_url.startswith("/"):
                     post_url = f"https://www.facebook.com{post_url}"
@@ -796,6 +797,7 @@ class FacebookSearchResultPage(WebPage):
                         title=title,
                         image=image,
                         price=price,
+                        original_price=original_price,
                         # all the ?referral_code&referral_sotry_type etc
                         # could be helpful for live navigation, but will be stripped
                         # for caching item details.
@@ -848,11 +850,13 @@ class FacebookItemPage(WebPage):
 
         # title
         title = self.get_title()
-        price = self.get_price()
+        price_raw = self.get_price()
         description = self.get_description()
 
-        if not title or not price or not description:
+        if not title or not price_raw or not description:
             raise ValueError(f"Failed to parse {post_url}")
+
+        price, original_price = parse_listing_prices(price_raw)
 
         if self.logger:
             self.logger.info(f"{hilight('[Retrieve]', 'succ')} Parsing {hilight(title)}")
@@ -862,7 +866,8 @@ class FacebookItemPage(WebPage):
             id=post_url.split("?")[0].rstrip("/").split("/")[-1],
             title=title,
             image=self.get_image_url(),
-            price=extract_price(price),
+            price=price,
+            original_price=original_price,
             post_url=post_url,
             location=self.get_location(),
             condition=self.get_condition(),
