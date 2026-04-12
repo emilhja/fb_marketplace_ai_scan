@@ -288,8 +288,9 @@ class MarketplaceMonitor:
                         if getattr(res, "response_model", None)
                         else ""
                     )
+                    _aimm_k = getattr(res, "listing_kind", None) or "unknown"
                     self.logger.info(
-                        f"""{hilight("[AI]", res.style)} {res.name or "AI"} concludes {hilight(f"{res.conclusion} ({res.score}): {res.comment}", res.style)} for listing {hilight(listing.title)}.{_aimm_cm}"""
+                        f"""{hilight("[AI]", res.style)} {res.name or "AI"} concludes {hilight(f"{res.conclusion} ({res.score}): {res.comment}", res.style)} for listing {hilight(listing.title)} [kind={_aimm_k}].{_aimm_cm}"""
                     )
             if item_config.rating:
                 acceptable_rating = item_config.rating[

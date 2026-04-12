@@ -28,6 +28,7 @@ class CachedAIResult:
     reason: str
     # Actual completion model from the API (e.g. OpenRouter-routed id); may be NULL in old DB rows.
     response_model: str | None = None
+    listing_kind: str = "unknown"
 
 
 def _truthy(value: str | None, default: bool = False) -> bool:
@@ -250,6 +251,12 @@ def ensure_database() -> bool:
             )
             cur.execute(
                 """
+                ALTER TABLE ai_evaluations
+                ADD COLUMN IF NOT EXISTS listing_kind TEXT NOT NULL DEFAULT 'unknown';
+                """
+            )
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS notification_events (
                     id BIGSERIAL PRIMARY KEY,
                     listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
@@ -444,7 +451,7 @@ def get_cached_ai_response(
                 cur.execute(
                     """
                     SELECT score, conclusion, comment, listing_price, content_hash, evaluated_at,
-                           response_model
+                           response_model, COALESCE(listing_kind, 'unknown') AS listing_kind
                     FROM ai_evaluations
                     WHERE listing_id = %s
                       AND model = %s
@@ -471,7 +478,7 @@ def get_cached_ai_response(
                 logger.info("[AIMM-DB] ai_cache_miss reason=no_previous_eval")
             return None
 
-        score, conclusion, comment, prev_price, prev_hash, evaluated_at, resp_model = row
+        score, conclusion, comment, prev_price, prev_hash, evaluated_at, resp_model, listing_kind = row
         can_reuse, reason = should_reuse_evaluation(
             previous_price=str(prev_price or ""),
             previous_content_hash=str(prev_hash or ""),
@@ -497,6 +504,7 @@ def get_cached_ai_response(
             model=model,
             reason=reason,
             response_model=rm,
+            listing_kind=str(listing_kind or "unknown"),
         )
     except Exception as exc:  # pragma: no cover
         if logger:
@@ -515,6 +523,7 @@ def store_ai_evaluation(
     conclusion: str,
     comment: str,
     response_model: str | None = None,
+    listing_kind: str = "unknown",
     logger: Any = None,
 ) -> None:
     if not cache_enabled():
@@ -528,9 +537,10 @@ def store_ai_evaluation(
                     """
                     INSERT INTO ai_evaluations (
                         listing_id, model, item_config_hash, marketplace_config_hash, prompt_version, prompt_hash,
-                        listing_price, content_hash, score, conclusion, comment, response_model, evaluated_at
+                        listing_price, content_hash, score, conclusion, comment, response_model, listing_kind,
+                        evaluated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW());
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW());
                     """,
                     (
                         listing_id,
@@ -545,11 +555,14 @@ def store_ai_evaluation(
                         conclusion,
                         comment,
                         response_model,
+                        listing_kind or "unknown",
                     ),
                 )
             conn.commit()
         if logger:
-            logger.info("[AIMM-DB] ai_eval_persisted")
+            logger.info(
+                f"[AIMM-DB] ai_eval_persisted ({listing_kind or 'unknown'})"
+            )
     except Exception as exc:  # pragma: no cover
         if logger:
             logger.warning(f"[AIMM-DB] store_ai_evaluation failed: {exc}")
@@ -566,6 +579,7 @@ def store_ai_evaluation_if_absent(
     conclusion: str,
     comment: str,
     response_model: str | None = None,
+    listing_kind: str = "unknown",
     logger: Any = None,
 ) -> None:
     """Persist one AI row when missing (e.g. result served from disk cache after PG was enabled)."""
@@ -604,9 +618,10 @@ def store_ai_evaluation_if_absent(
                     """
                     INSERT INTO ai_evaluations (
                         listing_id, model, item_config_hash, marketplace_config_hash, prompt_version, prompt_hash,
-                        listing_price, content_hash, score, conclusion, comment, response_model, evaluated_at
+                        listing_price, content_hash, score, conclusion, comment, response_model, listing_kind,
+                        evaluated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW());
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW());
                     """,
                     (
                         listing_id,
@@ -621,11 +636,14 @@ def store_ai_evaluation_if_absent(
                         conclusion,
                         comment,
                         response_model,
+                        listing_kind or "unknown",
                     ),
                 )
             conn.commit()
         if logger:
-            logger.info("[AIMM-DB] ai_eval_persisted (backfilled from disk cache)")
+            logger.info(
+                f"[AIMM-DB] ai_eval_persisted (backfilled from disk cache, {listing_kind or 'unknown'})"
+            )
     except Exception as exc:  # pragma: no cover
         if logger:
             logger.warning(f"[AIMM-DB] store_ai_evaluation_if_absent failed: {exc}")

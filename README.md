@@ -12,7 +12,7 @@ The wrapper can persist listing sightings, AI evaluations, and notification even
   ```bash
    pip install -r requirements.txt
   ```
-2. Add to `.env`:
+2. Copy `.env.example` to `.env` and set at least:
   ```bash
    AIMM_DATABASE_URL=postgresql://user:pass@localhost:5432/marketplace_scan
    AIMM_PG_CACHE_ENABLED=1

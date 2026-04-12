@@ -14,11 +14,31 @@ from .marketplace import TItemConfig, TMarketplaceConfig
 from .pg_cache import get_cached_ai_response, store_ai_evaluation, store_ai_evaluation_if_absent
 from .utils import BaseConfig, CacheType, CounterItem, cache, counter, hilight
 
+# Parsed from model "Form:" line; persisted as ai_evaluations.listing_kind
+_FORM_LINE_RE = re.compile(
+    r"(?im)^\s*Form:\s*(complete_pc|gpu_only|other|unknown)\s*$",
+)
+# Remove any "Form: …" line from the body so invalid labels do not leak into the comment.
+_FORM_ANY_LINE_RE = re.compile(r"(?im)^\s*Form:.*$")
 
-def parse_ai_rating_response(answer: str | None) -> Optional[tuple[int, str]]:
-    """Extract score 0–5 and comment from a model completion. None if no valid Rating line."""
+
+def parse_listing_kind(answer: str) -> str:
+    m = _FORM_LINE_RE.search(answer or "")
+    if not m:
+        return "unknown"
+    return m.group(1).lower()
+
+
+def _strip_form_lines(text: str) -> str:
+    return _FORM_ANY_LINE_RE.sub("", text).strip()
+
+
+def parse_ai_rating_response(answer: str | None) -> Optional[tuple[int, str, str]]:
+    """Extract score 0–5, comment, and listing_kind from a model completion. None if no valid Rating line."""
     if answer is None or not str(answer).strip():
         return None
+    listing_kind = parse_listing_kind(answer)
+    answer = _strip_form_lines(answer)
     if re.search(r"Rating[^0-5]*[0-5]", answer, re.DOTALL) is None:
         return None
     lines = answer.split("\n")
@@ -37,7 +57,7 @@ def parse_ai_rating_response(answer: str | None) -> Optional[tuple[int, str]]:
     if len(comment.strip()) < 5 and rating_line is not None and rating_line > 0:
         comment = lines[rating_line - 1]
     comment = " ".join([x for x in comment.split() if x.strip()]).strip()
-    return score, comment
+    return score, comment, listing_kind
 
 
 _SCORE_TO_CONCLUSION: dict[int, str] = {
@@ -63,6 +83,8 @@ class AIResponse:
     name: str = ""
     # Provider-reported model id for this completion (e.g. OpenRouter routed model for `openrouter/free`).
     response_model: str | None = None
+    # complete_pc | gpu_only | other | unknown — from model "Form:" line when enabled by prompt
+    listing_kind: str = "unknown"
 
     NOT_EVALUATED: ClassVar = "Not evaluated by AI"
 
@@ -104,6 +126,7 @@ class AIResponse:
             return None
         data = dict(res)
         data.setdefault("response_model", None)
+        data.setdefault("listing_kind", "unknown")
         return AIResponse(**data)
 
     def to_cache(
@@ -278,6 +301,14 @@ class AIBackend(Generic[TAIConfig]):
                 '"Rating <0-5>: <summary>"\n'
                 "where <0-5> is the rating and <summary> is a brief recommendation (max 30 words)."
             )
+        prompt += (
+            "\n\nAfter the Rating line, add one more line on its own (exact keyword Form, lowercase value):\n"
+            "Form: complete_pc | gpu_only | other | unknown\n"
+            "- complete_pc: full desktop / workstation / prebuilt / barebones sold as a working PC.\n"
+            "- gpu_only: standalone desktop graphics card (GPU alone is the main item).\n"
+            "- other: laptop, console, accessory-only lots, or none of the above fit.\n"
+            "- unknown: not enough in the title/description to classify.\n"
+        )
         if self.logger:
             self.logger.debug(f"""{hilight("[AI-Prompt]", "info")} {prompt}""")
         return prompt
@@ -337,6 +368,7 @@ class OpenAIBackend(AIBackend):
                 score=pg_cached.score,
                 comment=pg_cached.comment,
                 response_model=pg_cached.response_model,
+                listing_kind=pg_cached.listing_kind,
             )
         res: AIResponse | None = AIResponse.from_cache(listing, item_config, marketplace_config)
         if res is not None:
@@ -355,6 +387,7 @@ class OpenAIBackend(AIBackend):
                 conclusion=res.conclusion,
                 comment=res.comment,
                 response_model=res.response_model,
+                listing_kind=res.listing_kind,
                 logger=self.logger,
             )
             return res
@@ -418,12 +451,13 @@ class OpenAIBackend(AIBackend):
             counter.increment(CounterItem.FAILED_AI_QUERY, item_config.name)
             raise ValueError(f"Empty or invalid response from {self.config.name}: {response}")
 
-        score, comment = parsed
+        score, comment, listing_kind = parsed
         res = AIResponse(
             name=self.config.name,
             score=score,
             comment=comment,
             response_model=resolved_model,
+            listing_kind=listing_kind,
         )
         res.to_cache(listing, item_config, marketplace_config)
         store_ai_evaluation(
@@ -436,6 +470,7 @@ class OpenAIBackend(AIBackend):
             conclusion=res.conclusion,
             comment=res.comment,
             response_model=resolved_model,
+            listing_kind=res.listing_kind,
             logger=self.logger,
         )
         counter.increment(CounterItem.NEW_AI_QUERY, item_config.name)
