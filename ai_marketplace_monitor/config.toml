@@ -337,6 +337,7 @@ locale = "Chinese"
 [translation.sv]
 locale = "Swedish"
 'Collection of Marketplace items' = 'Samling av Marketplace-objekt'
+'Information about the seller Tradera' = 'Information om säljaren Tradera'
 'Condition' = 'Skick'
 'Description' = 'Beskrivning'
 'Details' = 'Detaljer'
