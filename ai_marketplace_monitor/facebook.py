@@ -17,6 +17,7 @@ from rich.pretty import pretty_repr
 
 from .listing import Listing
 from .marketplace import ItemConfig, Marketplace, MarketplaceConfig, WebPage
+from .pg_cache import should_skip_stable_detail_fetch
 from .utils import (
     BaseConfig,
     CounterItem,
@@ -521,8 +522,15 @@ class FacebookMarketplace(Marketplace):
 
                 counter.increment(CounterItem.SEARCH_PERFORMED, item_config.name)
 
+                _shallow_skip_enabled = os.environ.get(
+                    "AIMM_SHALLOW_STABLE_SKIP", ""
+                ).strip().lower() in ("1", "true", "yes")
+
                 # go to each item and get the description
                 # if we have not done that before
+                _serp_count = 0
+                _detail_fetched = 0
+                _stable_skipped = 0
                 for listing in found_listings:
                     if listing.post_url.split("?")[0] in found:
                         continue
@@ -530,9 +538,17 @@ class FacebookMarketplace(Marketplace):
                         return
                     counter.increment(CounterItem.LISTING_EXAMINED, item_config.name)
                     found[listing.post_url.split("?")[0]] = True
+                    _serp_count += 1
                     # filter by title and location; skip keyword filtering since we do not have description yet.
                     if not self.check_listing(listing, item_config, description_available=False):
                         counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
+                        continue
+                    # Shallow stable-skip: if PG confirms same price + prior AI eval, the
+                    # monitor's price gate would discard this listing anyway — skip Playwright.
+                    if _shallow_skip_enabled and should_skip_stable_detail_fetch(
+                        listing, logger=self.logger
+                    ):
+                        _stable_skipped += 1
                         continue
                     try:
                         details, from_cache = self.get_listing_details(
@@ -551,6 +567,7 @@ class FacebookMarketplace(Marketplace):
                                 f"""{hilight("[Retrieve]", "fail")} Failed to get item details: {e}"""
                             )
                         continue
+                    _detail_fetched += 1
                     # currently we trust the other items from summary page a bit better
                     # so we do not copy title, description etc from the detailed result
                     for attr in ("condition", "seller", "description"):
@@ -578,6 +595,12 @@ class FacebookMarketplace(Marketplace):
                         yield listing
                     else:
                         counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
+
+                if self.logger and _shallow_skip_enabled:
+                    self.logger.info(
+                        f"""{hilight("[SERP]", "info")} {_serp_count} cards"""
+                        f""" | detail_fetch={_detail_fetched} | stable_skip={_stable_skipped}"""
+                    )
 
     def get_listing_details(
         self: "FacebookMarketplace",

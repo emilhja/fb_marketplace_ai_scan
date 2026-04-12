@@ -305,6 +305,28 @@ def has_any_ai_evaluation_for_listing(listing: Listing, logger: Any = None) -> b
         return False
 
 
+def should_skip_stable_detail_fetch(listing: Listing, logger: Any = None) -> bool:
+    """True when the listing is stable enough to skip Playwright detail navigation.
+
+    Mirrors the monitor.py AI-skip gate: we skip only when PostgreSQL confirms
+    (a) the listing exists, (b) price has not changed since the last observed value,
+    and (c) at least one AI evaluation has already been persisted.  All three
+    conditions must hold; otherwise we fall through to a full detail fetch as usual.
+
+    Note: SERP price may occasionally differ from the stored detail-page price due to
+    scraping differences.  When that happens this function returns False (safe default:
+    force a fresh fetch).
+    """
+    if not cache_enabled():
+        return False
+    price_state = fetch_listing_price_state(listing, logger=logger)
+    if not price_state.exists:
+        return False
+    if price_state.previous_price != listing.price:
+        return False
+    return has_any_ai_evaluation_for_listing(listing, logger=logger)
+
+
 def fetch_listing_price_state(listing: Listing, logger: Any = None) -> ListingPriceState:
     """Return whether the listing exists in DB and what its stored price is, without writing."""
     if not cache_enabled():
