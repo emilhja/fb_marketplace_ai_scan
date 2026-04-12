@@ -401,6 +401,9 @@ class ItemConfig(MarketItemCommonConfig):
     # keywords is required, all others are optional
     search_phrases: List[str] = field(default_factory=list)
     keywords: List[str] | None = None
+    # Optional: logical expression like keywords, evaluated against the SERP card title only
+    # before opening the listing (skips junk Facebook returns for short queries like "5060").
+    serp_keywords: List[str] | None = None
     antikeywords: List[str] | None = None
     description: str | None = None
     marketplace: str | None = None
@@ -439,6 +442,18 @@ class ItemConfig(MarketItemCommonConfig):
             isinstance(x, str) for x in self.keywords
         ):
             raise ValueError(f"Item {hilight(self.name)} keywords must be a list.")
+
+    def handle_serp_keywords(self: "ItemConfig") -> None:
+        if self.serp_keywords is None:
+            return
+
+        if isinstance(self.serp_keywords, str):
+            self.serp_keywords = [self.serp_keywords]
+
+        if not isinstance(self.serp_keywords, list) or not all(
+            isinstance(x, str) for x in self.serp_keywords
+        ):
+            raise ValueError(f"Item {hilight(self.name)} serp_keywords must be a list.")
 
     def handle_description(self: "ItemConfig") -> None:
         if self.description is None:

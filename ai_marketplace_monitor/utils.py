@@ -426,8 +426,23 @@ expr = infix_notation(
 )
 
 
+def _operand_matches_text(
+    operand: str, haystack: str, *, digit_token_boundary: bool
+) -> bool:
+    """Leaf match for keyword expressions: substring, or digit-only token with (?<!\\d)…(?!\\d)."""
+    n_op = normalize_string(operand)
+    n_hay = normalize_string(haystack)
+    if digit_token_boundary and n_op.isdigit():
+        return re.search(rf"(?<!\d){re.escape(n_op)}(?!\d)", n_hay) is not None
+    return n_op in n_hay
+
+
 def is_substring(
-    var1: str | List[str], var2: str | List[str], logger: Logger | None = None
+    var1: str | List[str],
+    var2: str | List[str],
+    logger: Logger | None = None,
+    *,
+    digit_token_boundary: bool = False,
 ) -> bool:
     """Check if var1 is a substring of var2, after normalizing both strings. One of them can be a list of strings.
 
@@ -436,9 +451,14 @@ def is_substring(
           logical expression.
 
     var2: one or more strings for testing if strings in  "var1" is a substring.
+
+    digit_token_boundary: when True, operands that are only digits must match as a whole number
+          token (avoids e.g. 5060 matching inside 15060). Ignored for non-digit-only operands.
     """
     if isinstance(var1, list):
-        return any(is_substring(x, var2, logger) for x in var1)
+        return any(
+            is_substring(x, var2, logger, digit_token_boundary=digit_token_boundary) for x in var1
+        )
 
     # parse the expression
     parsed = ""
@@ -452,14 +472,24 @@ def is_substring(
                     f"Failed to parse {var1} as a logical expression. Treating it as literal string."
                 )
         if isinstance(var2, str):
-            return normalize_string(var1) in normalize_string(var2)
-        return any(normalize_string(var1) in normalize_string(s2) for s2 in var2)
+            return _operand_matches_text(var1, var2, digit_token_boundary=digit_token_boundary)
+        return any(
+            _operand_matches_text(var1, s2, digit_token_boundary=digit_token_boundary)
+            for s2 in var2
+        )
 
     def evaluate_expression(parsed_expression: str | ParseResults) -> bool:
         if isinstance(parsed_expression, str):
             if isinstance(var2, str):
-                return normalize_string(parsed_expression) in normalize_string(var2)
-            return any(normalize_string(parsed_expression) in normalize_string(s) for s in var2)
+                return _operand_matches_text(
+                    parsed_expression, var2, digit_token_boundary=digit_token_boundary
+                )
+            return any(
+                _operand_matches_text(
+                    parsed_expression, s, digit_token_boundary=digit_token_boundary
+                )
+                for s in var2
+            )
 
         if len(parsed_expression) == 1:
             return evaluate_expression(parsed_expression[0])
