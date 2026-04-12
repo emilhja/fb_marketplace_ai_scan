@@ -531,70 +531,90 @@ class FacebookMarketplace(Marketplace):
                 _serp_count = 0
                 _detail_fetched = 0
                 _stable_skipped = 0
+                _serp_total_cards = len(found_listings)
+                _search_progress_every = max(
+                    0,
+                    int((os.environ.get("AIMM_SEARCH_PROGRESS_EVERY", "25") or "25").strip()),
+                )
+                _serp_slot_idx = 0
                 for listing in found_listings:
-                    if listing.post_url.split("?")[0] in found:
-                        continue
-                    if self.keyboard_monitor is not None and self.keyboard_monitor.is_paused():
-                        return
-                    counter.increment(CounterItem.LISTING_EXAMINED, item_config.name)
-                    found[listing.post_url.split("?")[0]] = True
-                    _serp_count += 1
-                    # filter by title and location; skip keyword filtering since we do not have description yet.
-                    if not self.check_listing(listing, item_config, description_available=False):
-                        counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
-                        continue
-                    # Shallow stable-skip: if PG confirms same price + prior AI eval, the
-                    # monitor's price gate would discard this listing anyway — skip Playwright.
-                    if _shallow_skip_enabled and should_skip_stable_detail_fetch(
-                        listing, logger=self.logger
-                    ):
-                        _stable_skipped += 1
-                        continue
                     try:
-                        details, from_cache = self.get_listing_details(
-                            listing.post_url,
-                            item_config,
-                            price=listing.price,
-                            title=listing.title,
-                        )
-                        if not from_cache:
-                            time.sleep(5)
-                    except KeyboardInterrupt:
-                        raise
-                    except Exception as e:
-                        if self.logger:
-                            self.logger.error(
-                                f"""{hilight("[Retrieve]", "fail")} Failed to get item details: {e}"""
+                        if listing.post_url.split("?")[0] in found:
+                            continue
+                        if self.keyboard_monitor is not None and self.keyboard_monitor.is_paused():
+                            return
+                        counter.increment(CounterItem.LISTING_EXAMINED, item_config.name)
+                        found[listing.post_url.split("?")[0]] = True
+                        _serp_count += 1
+                        # filter by title and location; skip keyword filtering since we do not have description yet.
+                        if not self.check_listing(listing, item_config, description_available=False):
+                            counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
+                            continue
+                        # Shallow stable-skip: if PG confirms same price + prior AI eval, the
+                        # monitor's price gate would discard this listing anyway — skip Playwright.
+                        if _shallow_skip_enabled and should_skip_stable_detail_fetch(
+                            listing, logger=self.logger
+                        ):
+                            _stable_skipped += 1
+                            continue
+                        try:
+                            details, from_cache = self.get_listing_details(
+                                listing.post_url,
+                                item_config,
+                                price=listing.price,
+                                title=listing.title,
                             )
-                        continue
-                    _detail_fetched += 1
-                    # currently we trust the other items from summary page a bit better
-                    # so we do not copy title, description etc from the detailed result
-                    for attr in ("condition", "seller", "description"):
-                        # other attributes should be consistent
-                        setattr(listing, attr, getattr(details, attr))
-                    listing.original_price = details.original_price or listing.original_price
-                    listing.name = item_config.name
-                    if self.logger:
-                        self.logger.debug(
-                            f"""{hilight("[Retrieve]", "succ")} New item "{listing.title}" from {listing.post_url} is sold by "{listing.seller}" and with description "{listing.description[:100]}..." """
-                        )
+                            if not from_cache:
+                                time.sleep(5)
+                        except KeyboardInterrupt:
+                            raise
+                        except Exception as e:
+                            if self.logger:
+                                self.logger.error(
+                                    f"""{hilight("[Retrieve]", "fail")} Failed to get item details: {e}"""
+                                )
+                            continue
+                        _detail_fetched += 1
+                        # currently we trust the other items from summary page a bit better
+                        # so we do not copy title, description etc from the detailed result
+                        for attr in ("condition", "seller", "description"):
+                            # other attributes should be consistent
+                            setattr(listing, attr, getattr(details, attr))
+                        listing.original_price = details.original_price or listing.original_price
+                        listing.name = item_config.name
+                        if self.logger:
+                            self.logger.debug(
+                                f"""{hilight("[Retrieve]", "succ")} New item "{listing.title}" from {listing.post_url} is sold by "{listing.seller}" and with description "{listing.description[:100]}..." """
+                            )
 
-                    # Warn if we never managed to extract a description for keyword-based filtering
-                    if (
-                        (not listing.description or len(listing.description.strip()) == 0)
-                        and item_config.keywords
-                        and len(item_config.keywords) > 0
-                        and self.logger
-                    ):
-                        self.logger.debug(
-                            f"""{hilight("[Error]", "fail")} Failed to extract description for {hilight(listing.title)} at {listing.post_url}. Keyword filtering will only apply to title."""
-                        )
+                        # Warn if we never managed to extract a description for keyword-based filtering
+                        if (
+                            (not listing.description or len(listing.description.strip()) == 0)
+                            and item_config.keywords
+                            and len(item_config.keywords) > 0
+                            and self.logger
+                        ):
+                            self.logger.debug(
+                                f"""{hilight("[Error]", "fail")} Failed to extract description for {hilight(listing.title)} at {listing.post_url}. Keyword filtering will only apply to title."""
+                            )
 
-                    if self.check_listing(listing, item_config):
-                        yield listing
-                    else:
-                        counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
+                        if self.check_listing(listing, item_config):
+                            yield listing
+                        else:
+                            counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
+                    finally:
+                        _serp_slot_idx += 1
+                        if (
+                            self.logger
+                            and _serp_total_cards > 0
+                            and _search_progress_every > 0
+                            and _serp_slot_idx % _search_progress_every == 0
+                        ):
+                            self.logger.info(
+                                f"""{hilight("[Search]", "info")} {_serp_slot_idx} of """
+                                f"""{_serp_total_cards} SERP result(s) completed for """
+                                f"""{hilight(search_phrase)} from {hilight(cname or city)}"""
+                            )
 
                 if self.logger and _shallow_skip_enabled:
                     self.logger.info(
@@ -649,6 +669,28 @@ class FacebookMarketplace(Marketplace):
             if self.logger:
                 self.logger.info(
                     f"""{hilight("[Skip]", "fail")} Exclude {hilight(item.title)} due to {hilight("excluded keywords", "fail")}: {", ".join(antikeywords)}"""
+                )
+            return False
+
+        _serp_strict_title = os.environ.get("SEARCH_STRICTLY_IN_TITLE", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        serp_keywords = item_config.serp_keywords if _serp_strict_title else None
+        if (
+            not description_available
+            and serp_keywords
+            and not is_substring(
+                serp_keywords,
+                item.title,
+                logger=self.logger,
+                digit_token_boundary=True,
+            )
+        ):
+            if self.logger:
+                self.logger.info(
+                    f"""{hilight("[Skip]", "fail")} Exclude {hilight(item.title)} {hilight("without SERP title keywords", "fail")} (item.serp_keywords; enable SEARCH_STRICTLY_IN_TITLE)."""
                 )
             return False
 
@@ -884,6 +926,7 @@ class FacebookSearchResultPage(WebPage):
         )
         idle_need = int((os.environ.get("AIMM_FB_SERP_SCROLL_IDLE", "6") or "6").strip())
         pause = float((os.environ.get("AIMM_FB_SERP_SCROLL_PAUSE", "0.55") or "0.55").strip())
+        log_every = max(1, int((os.environ.get("AIMM_FB_SERP_LOG_EVERY", "8") or "8").strip()))
 
         if _scroll_on:
             try:
@@ -895,7 +938,15 @@ class FacebookSearchResultPage(WebPage):
         idle = 0
         rounds = max(1, max_rounds) if _scroll_on else 1
 
-        for _ in range(rounds):
+        if self.logger and _scroll_on:
+            self.logger.info(
+                f"{hilight('[SERP]', 'info')} "
+                f"Loading more results (max {max_rounds} scroll rounds, "
+                f"stop after {idle_need} passes with no new listing URLs, "
+                f"progress every {log_every} rounds)…"
+            )
+
+        for round_idx in range(rounds):
             try:
                 valid_listings = (
                     self._get_listing_elements_by_traversing_header()
@@ -920,12 +971,34 @@ class FacebookSearchResultPage(WebPage):
                     continue
                 by_url[key] = L
 
+            added = len(by_url) - before
+            if self.logger and _scroll_on:
+                if added > 0 and (round_idx == 0 or (round_idx + 1) % log_every == 0):
+                    self.logger.info(
+                        f"{hilight('[SERP]', 'info')} "
+                        f"scroll round {round_idx + 1}/{rounds}: "
+                        f"{len(by_url)} unique URLs (+{added} this pass)"
+                    )
+
             if not _scroll_on:
                 break
 
             if len(by_url) == before:
                 idle += 1
+                if self.logger and _scroll_on:
+                    self.logger.info(
+                        f"{hilight('[SERP]', 'info')} "
+                        f"No new listing URLs this pass — reached end of loaded batch, "
+                        f"nudging scroll again (idle {idle}/{idle_need}, "
+                        f"{len(by_url)} unique so far)"
+                    )
                 if idle >= idle_need:
+                    if self.logger and _scroll_on:
+                        self.logger.info(
+                            f"{hilight('[SERP]', 'info')} "
+                            f"No new URLs in {idle_need} consecutive passes; "
+                            f"finished loading search page."
+                        )
                     break
             else:
                 idle = 0
@@ -935,8 +1008,9 @@ class FacebookSearchResultPage(WebPage):
 
         listings = list(by_url.values())
         if self.logger and _scroll_on and len(listings) > 0:
-            self.logger.debug(
-                f"{hilight('[Retrieve]', 'dim')} SERP merged {len(listings)} unique listing URL(s) after scroll rounds"
+            self.logger.info(
+                f"{hilight('[SERP]', 'info')} "
+                f"Merged {len(listings)} unique listing URL(s) after scrolling."
             )
         return listings
 
@@ -1041,18 +1115,96 @@ class FacebookRegularItemPage(FacebookItemPage):
                 self.logger.debug(f"{hilight('[Retrieve]', 'fail')} {e}")
             return ""
 
+    @staticmethod
+    def _is_tradera_seller_noise(line: str, heading: str) -> bool:
+        low = line.lower().strip()
+        if not low:
+            return True
+        if low == "tradera":
+            return True
+        if heading.strip().lower() in low and len(low) <= len(heading) + 2:
+            return True
+        noise = (
+            "recenserad",
+            "gick med i tradera",
+            "joined tradera",
+            "läs mer",
+            "mer information från tradera",
+        )
+        return any(p in low for p in noise)
+
+    def _seller_from_tradera_crosslist(self: "FacebookRegularItemPage") -> str:
+        """Seller name on Marketplace listings mirrored from Tradera (no FB profile link)."""
+        html = (self.page.content() or "").lower()
+        if "tradera" not in html:
+            return ""
+        heading = self.translator("Information about the seller Tradera")
+        if any(c in heading for c in ('"', "'", "<", ">")):
+            return ""
+        h = heading.strip()
+        hlen = len(h)
+        # XPath 1.0 literal: prefer single-quoted argument (heading must not contain ')
+        if "'" in h:
+            return ""
+        label_el = self.page.query_selector(
+            f"xpath=//*[contains(normalize-space(string(.)), '{h}') and "
+            f"string-length(normalize-space(string(.))) <= {hlen + 40}]"
+        )
+        if label_el is None:
+            return ""
+        nxt = label_el.query_selector("xpath=following-sibling::*[1]")
+        if nxt is not None:
+            line = (nxt.text_content() or "").strip().split("\n")[0].strip()
+            if line and not self._is_tradera_seller_noise(line, heading):
+                return line
+        parent = label_el.query_selector("xpath=..")
+        if parent is None:
+            return ""
+        kids = parent.query_selector_all(":scope > *")
+        found = False
+        for k in kids:
+            raw = (k.text_content() or "").strip()
+            if not found:
+                if heading in raw or raw == heading:
+                    found = True
+                continue
+            first_line = raw.split("\n")[0].strip()
+            if first_line and not self._is_tradera_seller_noise(first_line, heading):
+                return first_line
+        return ""
+
     def get_seller(self: "FacebookRegularItemPage") -> str:
+        unspecified = self.translator("**unspecified**")
         try:
-            seller_link = self.page.locator("//a[contains(@href, '/marketplace/profile')]").last
-            return seller_link.text_content() or self.translator("**unspecified**")
+            # Locator.text_content() waits full default timeout when no node matches
+            # (common when not logged in). query_selector_all returns immediately.
+            for sel in (
+                'a[href*="/marketplace/profile"]',
+                'a[href*="marketplace/profile"]',
+                'a[href*="profile.php?id="]',
+            ):
+                anchors = self.page.query_selector_all(sel)
+                if not anchors:
+                    continue
+                text = (anchors[-1].text_content() or "").strip()
+                if text:
+                    return text
+            tradera_seller = self._seller_from_tradera_crosslist()
+            if tradera_seller:
+                return tradera_seller
+            if self.logger:
+                self.logger.debug(
+                    f"{hilight('[Retrieve]', 'fail')} get_seller: no seller link in DOM"
+                )
+            return unspecified
         except KeyboardInterrupt:
             raise
         except Exception as e:
             if self.logger:
-                self.logger.error(
-                    f"{hilight('[Error]', 'fail')} get_seller failed: {type(e).__name__}: {e}"
+                self.logger.debug(
+                    f"{hilight('[Retrieve]', 'fail')} get_seller failed: {type(e).__name__}: {e}"
                 )
-            return ""
+            return unspecified
 
     def get_description(self: "FacebookRegularItemPage") -> str:
         try:
