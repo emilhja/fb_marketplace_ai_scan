@@ -15,6 +15,41 @@ from .pg_cache import get_cached_ai_response, store_ai_evaluation, store_ai_eval
 from .utils import BaseConfig, CacheType, CounterItem, cache, counter, hilight
 
 
+def parse_ai_rating_response(answer: str | None) -> Optional[tuple[int, str]]:
+    """Extract score 0–5 and comment from a model completion. None if no valid Rating line."""
+    if answer is None or not str(answer).strip():
+        return None
+    if re.search(r"Rating[^0-5]*[0-5]", answer, re.DOTALL) is None:
+        return None
+    lines = answer.split("\n")
+    score = 1
+    comment = ""
+    rating_line: int | None = None
+    for idx, line in enumerate(lines):
+        matched = re.match(r".*Rating[^0-5]*([0-5])[:\s]*(.*)", line)
+        if matched:
+            score = int(matched.group(1))
+            comment = matched.group(2).strip()
+            rating_line = idx
+            continue
+        if rating_line is not None:
+            comment += " " + line
+    if len(comment.strip()) < 5 and rating_line is not None and rating_line > 0:
+        comment = lines[rating_line - 1]
+    comment = " ".join([x for x in comment.split() if x.strip()]).strip()
+    return score, comment
+
+
+_SCORE_TO_CONCLUSION: dict[int, str] = {
+    0: "Missing required data",
+    1: "No match",
+    2: "Potential match",
+    3: "Poor match",
+    4: "Good match",
+    5: "Great deal",
+}
+
+
 class AIServiceProvider(Enum):
     OPENAI = "OpenAI"
     DEEPSEEK = "DeepSeek"
@@ -33,13 +68,7 @@ class AIResponse:
 
     @property
     def conclusion(self: "AIResponse") -> str:
-        return {
-            1: "No match",
-            2: "Potential match",
-            3: "Poor match",
-            4: "Good match",
-            5: "Great deal",
-        }[self.score]
+        return _SCORE_TO_CONCLUSION.get(self.score, "Unknown rating")
 
     @property
     def style(self: "AIResponse") -> str:
@@ -236,15 +265,18 @@ class AIBackend(Generic[TAIConfig]):
             prompt += f"\n{marketplace_config.rating_prompt.strip()}\n"
         else:
             prompt += (
-                "\nRate from 1 to 5 based on the following: \n"
-                "1 - No match: Missing key details, wrong category/brand, or suspicious activity (e.g., external links).\n"
-                "2 - Potential match: Lacks essential info (e.g., condition, brand, or model); needs clarification.\n"
-                "3 - Poor match: Some mismatches or missing details; acceptable but not ideal.\n"
+                "\nRate from 0 to 5 based on the following: \n"
+                "0 - Missing required data: Hard requirements from the user's criteria cannot be verified because "
+                "they are absent from the title and description (e.g. VRAM in GB for a GPU listing). Do not guess; "
+                "state clearly which required facts are missing.\n"
+                "1 - No match: Wrong item/category/brand, suspicious activity (e.g. external links), or clearly excluded.\n"
+                "2 - Potential match: Partial info; needs seller clarification but not a missing hard requirement.\n"
+                "3 - Poor match: Some mismatches or weak details; acceptable but not ideal.\n"
                 "4 - Good match: Mostly meets criteria with clear, relevant details.\n"
                 "5 - Great deal: Fully matches criteria, with excellent condition or price.\n"
                 "Conclude with:\n"
-                '"Rating <1-5>: <summary>"\n'
-                "where <1-5> is the rating and <summary> is a brief recommendation (max 30 words)."
+                '"Rating <0-5>: <summary>"\n'
+                "where <0-5> is the rating and <summary> is a brief recommendation (max 30 words)."
             )
         if self.logger:
             self.logger.debug(f"""{hilight("[AI-Prompt]", "info")} {prompt}""")
@@ -381,35 +413,12 @@ class OpenAIBackend(AIBackend):
             resolved_model = None
 
         answer = response.choices[0].message.content or ""
-        if (
-            answer is None
-            or not answer.strip()
-            or re.search(r"Rating[^1-5]*[1-5]", answer, re.DOTALL) is None
-        ):
+        parsed = parse_ai_rating_response(answer)
+        if parsed is None:
             counter.increment(CounterItem.FAILED_AI_QUERY, item_config.name)
             raise ValueError(f"Empty or invalid response from {self.config.name}: {response}")
 
-        lines = answer.split("\n")
-        # if any of the lines contains "Rating: ", extract the rating from it.
-        score: int = 1
-        comment = ""
-        rating_line = None
-        for idx, line in enumerate(lines):
-            matched = re.match(r".*Rating[^1-5]*([1-5])[:\s]*(.*)", line)
-            if matched:
-                score = int(matched.group(1))
-                comment = matched.group(2).strip()
-                rating_line = idx
-                continue
-            if rating_line is not None:
-                # if the AI puts comment after Rating, we need to include them
-                comment += " " + line
-        # if the AI puts the rating at the end, let us try to use the line before the Rating line
-        if len(comment.strip()) < 5 and rating_line is not None and rating_line > 0:
-            comment = lines[rating_line - 1]
-
-        # remove multiple spaces, take first 30 words
-        comment = " ".join([x for x in comment.split() if x.strip()]).strip()
+        score, comment = parsed
         res = AIResponse(
             name=self.config.name,
             score=score,
