@@ -48,6 +48,16 @@ The wrapper can persist listing sightings, AI evaluations, and notification even
 2. Re-apply local features in these files first: `ai.py`, `monitor.py`, `facebook.py`, `pg_cache.py`.
 3. Run tests (`python3 -m unittest discover -s tests`) and a dry scan before production use.
 
+## Skipped listings, logs, and detail cache
+
+When Facebook search filters out a listing (e.g. `[Skip] … without required keywords in title and description`, antikeywords, location, banned seller):
+
+- **Logs:** Those lines are normal **INFO** logging only. There is no separate “skipped listings” database for faster matching; use your log files or terminal history if you want to review them.
+- **PostgreSQL:** Skipped listings are **not** passed into the monitor’s main loop, so they are **not** upserted via `observe_listing` from that path (unlike listings that pass filters and get AI evaluation / tracking).
+- **Disk cache:** After a listing **detail page** is opened and parsed successfully, details are stored in **diskcache** under `~/.ai-marketplace-monitor/` (`Listing.to_cache`). That cache **survives closing the browser** and **new Playwright sessions**. If the same item URL appears again with the **same SERP title and price**, the scanner can **reuse cached details** and skip navigating to the listing tab again.
+- **What still happens every run:** Marketplace **search** still runs in the browser; result cards are still walked. Caching only avoids **repeat detail-page fetches** when the cache entry matches, not “hide this URL from search forever.”
+- **Shallow stable skip** (`AIMM_SHALLOW_STABLE_SKIP`): separate feature; it uses PostgreSQL (same price + prior AI row). Keyword-only skips do **not** enable that path by themselves.
+
 ## Terminal output when something matches
 
 You do not need Discord or any other notifier to see hits in the terminal. After each search, when at least one listing passes the AI score threshold, a **compact summary** is printed to **stderr**:
