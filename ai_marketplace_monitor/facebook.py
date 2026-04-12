@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import humanize
 from currency_converter import CurrencyConverter  # type: ignore
-from playwright.sync_api import Browser, ElementHandle, Page  # type: ignore
+from playwright.sync_api import Browser, ElementHandle, Locator, Page  # type: ignore
 from rich.pretty import pretty_repr
 
 from .listing import Listing
@@ -701,6 +701,118 @@ class FacebookMarketplace(Marketplace):
 
 
 class FacebookSearchResultPage(WebPage):
+    def _serp_collection_heading(self: "FacebookSearchResultPage") -> Locator:
+        return self.page.locator(
+            f'[aria-label="{self.translator("Collection of Marketplace items")}"]'
+        )
+
+    def _serp_scroll_step(self: "FacebookSearchResultPage") -> None:
+        """Nudge Facebook's SERP: inner overflow pane, window, and mouse wheel (one combined step)."""
+        heading = self._serp_collection_heading()
+        if heading.count() > 0:
+            try:
+                heading.first.evaluate(
+                    """(heading) => {
+                        let n = heading;
+                        for (let p = heading; p; p = p.parentElement) {
+                            if (!p.parentElement) break;
+                            const st = window.getComputedStyle(p);
+                            const oy = st.overflowY;
+                            if ((oy === "auto" || oy === "scroll" || oy === "overlay") &&
+                                p.scrollHeight > p.clientHeight + 1) {
+                                n = p;
+                                break;
+                            }
+                        }
+                        n.scrollTop = n.scrollHeight;
+                    }"""
+                )
+            except Exception as e:
+                if self.logger:
+                    self.logger.debug(
+                        f"{hilight('[Retrieve]', 'dim')} SERP inner scroll failed: {e}"
+                    )
+        try:
+            self.page.evaluate(
+                "window.scrollBy(0, Math.floor((window.innerHeight || 800) * 0.9))"
+            )
+        except Exception as e:
+            if self.logger:
+                self.logger.debug(
+                    f"{hilight('[Retrieve]', 'dim')} SERP window scroll failed: {e}"
+                )
+        try:
+            vp = self.page.viewport_size
+            if vp:
+                self.page.mouse.move(
+                    max(50, vp["width"] // 2),
+                    max(50, min(vp["height"] // 2, 500)),
+                )
+                self.page.mouse.wheel(0, 2800)
+        except Exception as e:
+            if self.logger:
+                self.logger.debug(
+                    f"{hilight('[Retrieve]', 'dim')} SERP mouse wheel failed: {e}"
+                )
+
+    def _handles_to_listings(
+        self: "FacebookSearchResultPage", valid_listings: List[ElementHandle]
+    ) -> List[Listing]:
+        """Parse Marketplace card element handles into Listing rows (same rules as legacy get_listings)."""
+        listings: List[Listing] = []
+        for idx, listing in enumerate(valid_listings):
+            try:
+                atag = listing.query_selector(
+                    ":scope > :first-child > :first-child > :first-child > :first-child > :first-child > :first-child > :first-child > :first-child"
+                )
+                if not atag:
+                    continue
+                post_url = atag.get_attribute("href") or ""
+                details_divs = atag.query_selector_all(":scope > :first-child > div")
+                if not details_divs:
+                    continue
+                details = details_divs[1]
+                divs = details.query_selector_all(":scope > div")
+                raw_price = "" if len(divs) < 1 else divs[0].text_content() or ""
+                title = "" if len(divs) < 2 else divs[1].text_content() or ""
+                location = "" if len(divs) < 3 else (divs[2].text_content() or "")
+
+                img = listing.query_selector("img")
+                image = img.get_attribute("src") if img else ""
+                price, original_price = parse_listing_prices(raw_price)
+
+                if post_url.startswith("/"):
+                    post_url = f"https://www.facebook.com{post_url}"
+
+                if image.startswith("/"):
+                    image = f"https://www.facebook.com{image}"
+
+                listings.append(
+                    Listing(
+                        marketplace="facebook",
+                        name="",
+                        id=post_url.split("?")[0].rstrip("/").split("/")[-1],
+                        title=title,
+                        image=image,
+                        price=price,
+                        original_price=original_price,
+                        post_url=post_url,
+                        location=location,
+                        condition="",
+                        seller="",
+                        description="",
+                    )
+                )
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(
+                        f"{hilight('[Retrieve]', 'fail')} Failed to parse search results {idx + 1} listing: {e}"
+                    )
+                continue
+        return listings
+
     def _get_listings_elements_by_children_counts(self: "FacebookSearchResultPage"):
         parent: ElementHandle | None = self.page.locator("img").first.element_handle()
         # look for parent of parent until it has more than 10 children
@@ -726,10 +838,8 @@ class FacebookSearchResultPage(WebPage):
         return valid_listings
 
     def _get_listing_elements_by_traversing_header(self: "FacebookSearchResultPage"):
-        heading = self.page.locator(
-            f'[aria-label="{self.translator("Collection of Marketplace items")}"]'
-        )
-        if not heading:
+        heading = self._serp_collection_heading()
+        if heading.count() == 0:
             return []
 
         grid_items = heading.locator(
@@ -764,81 +874,70 @@ class FacebookSearchResultPage(WebPage):
                 self.logger.info(f"{hilight('[Retrieve]', 'dim')} {msg}")
             return []
 
-        # find the grid box
-        try:
-            valid_listings = (
-                self._get_listing_elements_by_traversing_header()
-                or self._get_listings_elements_by_children_counts()
-            )
-        except KeyboardInterrupt:
-            raise
-        except Exception as e:
-            filename = datetime.datetime.now().strftime("debug_%Y%m%d_%H%M%S.html")
-            if self.logger:
-                self.logger.error(
-                    f"{hilight('[Retrieve]', 'fail')} failed to parse searching result. Page saved to {filename}: {e}"
-                )
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(self.page.content())
-            return []
+        _scroll_on = os.environ.get("AIMM_FB_SERP_SCROLL", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+        )
+        max_rounds = int(
+            (os.environ.get("AIMM_FB_SERP_SCROLL_MAX_ROUNDS", "150") or "150").strip()
+        )
+        idle_need = int((os.environ.get("AIMM_FB_SERP_SCROLL_IDLE", "6") or "6").strip())
+        pause = float((os.environ.get("AIMM_FB_SERP_SCROLL_PAUSE", "0.55") or "0.55").strip())
 
-        listings: List[Listing] = []
-        for idx, listing in enumerate(valid_listings):
+        if _scroll_on:
             try:
-                atag = listing.query_selector(
-                    ":scope > :first-child > :first-child > :first-child > :first-child > :first-child > :first-child > :first-child > :first-child"
-                )
-                if not atag:
-                    continue
-                post_url = atag.get_attribute("href") or ""
-                details_divs = atag.query_selector_all(":scope > :first-child > div")
-                if not details_divs:
-                    continue
-                details = details_divs[1]
-                divs = details.query_selector_all(":scope > div")
-                raw_price = "" if len(divs) < 1 else divs[0].text_content() or ""
-                title = "" if len(divs) < 2 else divs[1].text_content() or ""
-                # location can be empty in some rare cases
-                location = "" if len(divs) < 3 else (divs[2].text_content() or "")
+                self._serp_collection_heading().first.wait_for(state="visible", timeout=20000)
+            except Exception:
+                pass
 
-                # get image
-                img = listing.query_selector("img")
-                image = img.get_attribute("src") if img else ""
-                price, original_price = parse_listing_prices(raw_price)
+        by_url: dict[str, Listing] = {}
+        idle = 0
+        rounds = max(1, max_rounds) if _scroll_on else 1
 
-                if post_url.startswith("/"):
-                    post_url = f"https://www.facebook.com{post_url}"
-
-                if image.startswith("/"):
-                    image = f"https://www.facebook.com{image}"
-
-                listings.append(
-                    Listing(
-                        marketplace="facebook",
-                        name="",
-                        id=post_url.split("?")[0].rstrip("/").split("/")[-1],
-                        title=title,
-                        image=image,
-                        price=price,
-                        original_price=original_price,
-                        # all the ?referral_code&referral_sotry_type etc
-                        # could be helpful for live navigation, but will be stripped
-                        # for caching item details.
-                        post_url=post_url,
-                        location=location,
-                        condition="",
-                        seller="",
-                        description="",
-                    )
+        for _ in range(rounds):
+            try:
+                valid_listings = (
+                    self._get_listing_elements_by_traversing_header()
+                    or self._get_listings_elements_by_children_counts()
                 )
             except KeyboardInterrupt:
                 raise
             except Exception as e:
+                filename = datetime.datetime.now().strftime("debug_%Y%m%d_%H%M%S.html")
                 if self.logger:
                     self.logger.error(
-                        f"{hilight('[Retrieve]', 'fail')} Failed to parse search results {idx + 1} listing: {e}"
+                        f"{hilight('[Retrieve]', 'fail')} failed to parse searching result. Page saved to {filename}: {e}"
                     )
-                continue
+                with open(filename, "w", encoding="utf-8") as f:
+                    f.write(self.page.content())
+                return []
+
+            before = len(by_url)
+            for L in self._handles_to_listings(valid_listings):
+                key = (L.post_url or "").split("?")[0].strip()
+                if not key or "/marketplace/item/" not in key:
+                    continue
+                by_url[key] = L
+
+            if not _scroll_on:
+                break
+
+            if len(by_url) == before:
+                idle += 1
+                if idle >= idle_need:
+                    break
+            else:
+                idle = 0
+
+            self._serp_scroll_step()
+            time.sleep(pause)
+
+        listings = list(by_url.values())
+        if self.logger and _scroll_on and len(listings) > 0:
+            self.logger.debug(
+                f"{hilight('[Retrieve]', 'dim')} SERP merged {len(listings)} unique listing URL(s) after scroll rounds"
+            )
         return listings
 
 
