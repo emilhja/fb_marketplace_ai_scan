@@ -72,3 +72,58 @@ AIMM_PRINT_FOUND=0
 ```
 
 Accepted “off” values: `0`, `false`, `no`, `off` (case-insensitive).
+---
+
+## Dashboard (FastAPI + React)
+
+A read-only local dashboard for browsing the PostgreSQL cache — listings with AI evaluations, price history, and notification events.
+
+### Requirements
+
+- Python 3.11+ (for the API)
+- Node 18+ (for the frontend)
+- PostgreSQL cache populated by at least one monitor run (`AIMM_PG_CACHE_ENABLED=1`)
+
+### Start the API
+
+```bash
+cd backend
+./start.sh          # creates .venv, installs deps, starts uvicorn on http://127.0.0.1:8000
+```
+
+Or manually:
+```bash
+cd backend
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# ensure AIMM_DATABASE_URL or DATABASE_URL is set (inherited from repo .env by start.sh)
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+### Start the frontend
+
+```bash
+cd frontend
+npm install         # first time only
+npm run dev         # Vite dev server at http://127.0.0.1:5173
+```
+
+Open http://127.0.0.1:5173 in your browser.
+
+### Alembic (baseline stamp)
+
+The schema is owned by `pg_cache.ensure_database()`. After first install, stamp Alembic so future dashboard-specific migrations work cleanly:
+
+```bash
+cd backend
+.venv/bin/alembic stamp head
+```
+
+### API endpoints
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/listings` | Listings + latest AI evaluation. Filter: title, score_min/max, listing_kind, marketplace, date ranges. Sort: last_seen_at, score, title, evaluated_at. |
+| `GET /api/listing-price-history` | Price change log. Filter: listing_id, date range. |
+| `GET /api/notification-events` | Notification log. Filter: channel, status, listing_id, date range. |
+
+All endpoints support `page`, `page_size`, `sort_dir`. Full OpenAPI docs: http://127.0.0.1:8000/docs

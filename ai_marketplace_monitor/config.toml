@@ -315,6 +315,7 @@ currency = 'EUR'
 [translation.es]
 locale = "Spanish"
 'Collection of Marketplace items' = 'Colección de artículos de Marketplace'
+'See more' = 'Ver más'
 'Condition' = 'Estado'
 'Description' = 'Descripción'
 'Details' = 'Detalles'
@@ -326,6 +327,7 @@ locale = "Spanish"
 [translation.zh]
 locale = "Chinese"
 'Collection of Marketplace items' = 'Marketplace 商品收藏夹'
+'See more' = '查看更多'
 'Condition' = '商品状况'
 'Description' = '描述'
 'Details' = '详细信息'
@@ -338,6 +340,7 @@ locale = "Chinese"
 locale = "Swedish"
 'Collection of Marketplace items' = 'Samling av Marketplace-objekt'
 'Information about the seller Tradera' = 'Information om säljaren Tradera'
+'See more' = 'Visa mer'
 'Condition' = 'Skick'
 'Description' = 'Beskrivning'
 'Details' = 'Detaljer'

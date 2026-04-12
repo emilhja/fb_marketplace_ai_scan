@@ -1206,11 +1206,50 @@ class FacebookRegularItemPage(FacebookItemPage):
                 )
             return unspecified
 
+    def _expand_see_more_in_scope(self: "FacebookRegularItemPage", scope: Locator) -> None:
+        """Facebook collapses long attribute lists; DOM may only show truncated text + 'See more'."""
+        labels = {self.translator("See more"), "See more"}
+        labels = {x.strip() for x in labels if x and x.strip()}
+        for label in labels:
+            try:
+                btn = scope.get_by_role("button", name=re.compile(re.escape(label), re.I))
+                for i in range(min(btn.count(), 12)):
+                    try:
+                        loc = btn.nth(i)
+                        if loc.is_visible(timeout=400):
+                            loc.click(timeout=4000)
+                            doze(0.2)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            try:
+                linkish = scope.get_by_text(label, exact=True)
+                if linkish.count() == 0:
+                    continue
+                for i in range(min(linkish.count(), 12)):
+                    try:
+                        loc = linkish.nth(i)
+                        if loc.is_visible(timeout=400):
+                            loc.click(timeout=4000)
+                            doze(0.2)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
     def get_description(self: "FacebookRegularItemPage") -> str:
         try:
             # Find the span with text "condition", then parent, then next...
             description_element = self.page.locator(
                 f'span:text("{self.translator("Condition")}") >> xpath=ancestor::ul[1] >> xpath=following-sibling::*[1]'
+            )
+            self._expand_see_more_in_scope(description_element)
+            # Fallback: some layouts attach the control outside the following-sibling block
+            self._expand_see_more_in_scope(
+                self.page.locator(
+                    f'span:text("{self.translator("Condition")}") >> xpath=ancestor::div[1]'
+                )
             )
             return description_element.text_content() or self.translator("**unspecified**")
         except KeyboardInterrupt:
