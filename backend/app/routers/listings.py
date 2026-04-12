@@ -15,13 +15,13 @@ from ..schemas import LatestAIEval, ListingRow, PagedResponse
 router = APIRouter(prefix="/api/listings", tags=["listings"])
 
 SORT_COLUMNS: dict[str, str] = {
-    "last_seen_at": "l.last_seen_at",
-    "first_seen_at": "l.first_seen_at",
-    "title": "l.title",
-    "current_price": "l.current_price",
-    "score": "ae.score",
-    "evaluated_at": "ae.evaluated_at",
-    "listing_kind": "ae.listing_kind",
+    "last_seen_at": "listings.last_seen_at",
+    "first_seen_at": "listings.first_seen_at",
+    "title": "listings.title",
+    "current_price": "listings.current_price",
+    "score": "latest_eval.score",
+    "evaluated_at": "latest_eval.evaluated_at",
+    "listing_kind": "latest_eval.listing_kind",
 }
 
 
@@ -47,7 +47,7 @@ def list_listings(
     sort_by: str = Query("last_seen_at"),
     sort_dir: Literal["asc", "desc"] = Query("desc"),
 ):
-    sort_col = SORT_COLUMNS.get(sort_by, "l.last_seen_at")
+    sort_col = SORT_COLUMNS.get(sort_by, "listings.last_seen_at")
     direction = "ASC" if sort_dir == "asc" else "DESC"
 
     # Subquery: latest ai_evaluation per listing (by evaluated_at DESC, id DESC as tie-break)
