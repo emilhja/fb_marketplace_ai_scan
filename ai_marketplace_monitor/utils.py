@@ -400,10 +400,10 @@ def normalize_string(string: str) -> str:
 
 
 ParserElement.enable_packrat()
-double_quoted_string = ('"' + CharsNotIn('"').leaveWhitespace() + '"').setParseAction(
+double_quoted_string = ('"' + CharsNotIn('"').leave_whitespace() + '"').set_parse_action(
     lambda t: t[1]
 )  # removes quotes, keeps only the content
-single_quoted_string = ("'" + CharsNotIn("'").leaveWhitespace() + "'").setParseAction(
+single_quoted_string = ("'" + CharsNotIn("'").leave_whitespace() + "'").set_parse_action(
     lambda t: t[1]
 )  # removes quotes, keeps only the content
 
@@ -461,7 +461,7 @@ def is_substring(
     # parse the expression
     parsed = ""
     try:
-        parsed = expr.parseString(var1, parseAll=True)[0]
+        parsed = expr.parse_string(var1, parse_all=True)[0]
     except Exception:
         # treat var1 as literal string for searching.
         if any(x in var1 for x in (" AND ", " OR ", " NOT ", "(NOT ")) or var1.startswith("NOT "):

@@ -1,15 +1,26 @@
 """FastAPI application entrypoint for the local dashboard API."""
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .db import ensure_dashboard_schema
 from .routers import listings, notifications, price_history
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Apply dashboard-only schema additions on API startup."""
+    ensure_dashboard_schema()
+    yield
+
+
 app = FastAPI(
     title="FB Marketplace Dashboard API",
     description="Read-only dashboard over the ai-marketplace-monitor PostgreSQL cache.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -35,8 +46,3 @@ def health() -> dict[str, str]:
     """Return a minimal liveness payload for local tooling and CI smoke tests."""
     return {"status": "ok"}
 
-
-@app.on_event("startup")
-def startup() -> None:
-    """Apply dashboard-only schema additions on API startup."""
-    ensure_dashboard_schema()

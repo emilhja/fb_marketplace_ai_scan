@@ -44,6 +44,7 @@ python3 -m venv .venv
 pip install -r requirements-dev.txt
 ```
 
+*(Note: The React dashboard requires **Node.js v20.19+** or **v22+** to build properly)*
 ```bash
 cd frontend
 npm install

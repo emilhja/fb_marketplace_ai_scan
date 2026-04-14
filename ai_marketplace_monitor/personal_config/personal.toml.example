@@ -76,8 +76,10 @@
 # -----------------------------------------------------------------------------
 
 [marketplace.facebook]
+# It is not necessary to add email and password below
 # username = "${FACEBOOK_EMAIL}"
 # password = "${FACEBOOK_PASSWORD}"
+
 # login_wait_time = "2 minutes"
 # language = "sv"
 # search_city = ["stockholm"]
