@@ -4,6 +4,7 @@ DDL for all existing tables is OWNED by pg_cache.ensure_database().
 This Alembic setup is baseline-only: run `alembic stamp head` once after
 initial setup, then use real revisions only for future dashboard-specific tables.
 """
+
 from __future__ import annotations
 
 import os
@@ -23,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.models import Base  # noqa: E402
 
 config = context.config
+
 
 # Override sqlalchemy.url from environment (never use the placeholder in alembic.ini).
 def _db_url() -> str:

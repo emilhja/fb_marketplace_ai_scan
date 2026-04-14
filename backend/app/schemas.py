@@ -1,4 +1,5 @@
 """Pydantic v2 response and query parameter schemas."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -48,12 +49,43 @@ class ListingRow(BaseModel):
     description: str
     location: str
     skick: str
+    availability: str
+    is_tradera: bool
+    message_sent: bool
+    vram: str | None = None
+    vram_override: str | None = None
+    contacted_seller: bool
+    user_note: str
+    user_feedback: str | None = None
     first_seen_at: datetime
     last_seen_at: datetime
     # latest AI evaluation (may be absent for newly seen listings)
     ai: LatestAIEval | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ListingUpdateRequest(BaseModel):
+    user_note: str | None = None
+    user_feedback: str | None = None
+    vram_override: str | None = None
+    contacted_seller: bool | None = None
+
+
+class ListingRerunRequest(BaseModel):
+    listing_ids: list[int]
+
+
+class ListingRerunResult(BaseModel):
+    listing_id: int
+    canonical_post_url: str | None = None
+    target_item: str | None = None
+    success: bool
+    message: str
+
+
+class ListingRerunResponse(BaseModel):
+    results: list[ListingRerunResult]
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +99,8 @@ class PriceHistoryRow(BaseModel):
     listing_title: str | None = None
     canonical_post_url: str | None = None
     price: str
+    previous_price: str | None = None
+    changed_by: int | None = None
     observed_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

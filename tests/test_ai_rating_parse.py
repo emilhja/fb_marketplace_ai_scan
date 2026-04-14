@@ -4,7 +4,7 @@ from ai_marketplace_monitor.ai import AIResponse, parse_ai_rating_response
 def test_parse_rating_zero_missing_vram() -> None:
     answer = (
         "The listing does not state VRAM.\n"
-        'Rating 0: VRAM (GB) not stated in title or description; cannot verify 16 GB requirement.'
+        "Rating 0: VRAM (GB) not stated in title or description; cannot verify 16 GB requirement."
     )
     parsed = parse_ai_rating_response(answer)
     assert parsed is not None
@@ -17,7 +17,7 @@ def test_parse_rating_zero_missing_vram() -> None:
 
 
 def test_parse_rating_three_unchanged() -> None:
-    answer = 'Rating 3: Adequate but vague on condition.'
+    answer = "Rating 3: Adequate but vague on condition."
     parsed = parse_ai_rating_response(answer)
     assert parsed is not None
     score, comment, listing_kind = parsed
@@ -28,9 +28,7 @@ def test_parse_rating_three_unchanged() -> None:
 
 def test_parse_with_form_line_gpu_only() -> None:
     answer = (
-        "Looks like a bare card.\n"
-        "Rating 4: RTX 5060 Ti 16 GB standalone GPU.\n"
-        "Form: gpu_only"
+        "Looks like a bare card.\n" "Rating 4: RTX 5060 Ti 16 GB standalone GPU.\n" "Form: gpu_only"
     )
     parsed = parse_ai_rating_response(answer)
     assert parsed is not None

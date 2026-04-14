@@ -11,6 +11,7 @@ Patches:
     PostgreSQL AI dedupe/cache hooks.
  3. facebook.py — log search failure only when no listings; optional manual-search fallback.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -29,7 +30,10 @@ SENTINEL_PG_NOTIFY = "facebook_marketplace_scan_patch: pg_notify_event"
 def package_dir() -> Path:
     spec = importlib.util.find_spec("ai_marketplace_monitor")
     if not spec or not spec.origin:
-        print("apply_ai_marketplace_monitor_patches: ai_marketplace_monitor not found", file=sys.stderr)
+        print(
+            "apply_ai_marketplace_monitor_patches: ai_marketplace_monitor not found",
+            file=sys.stderr,
+        )
         sys.exit(1)
     return Path(spec.origin).parent
 
@@ -76,14 +80,20 @@ def patch_monitor(monitor_py: Path) -> bool:
     if res_needle in text:
         text = text.replace(
             res_needle,
-            res_needle.replace("            if self.logger:", block_res + "            if self.logger:", 1),
+            res_needle.replace(
+                "            if self.logger:", block_res + "            if self.logger:", 1
+            ),
             1,
         )
 
     if rating_needle in text:
         text = text.replace(
             rating_needle,
-            rating_needle.replace("                if self.logger:", block_rating + "                if self.logger:", 1),
+            rating_needle.replace(
+                "                if self.logger:",
+                block_rating + "                if self.logger:",
+                1,
+            ),
             1,
         )
 
@@ -166,7 +176,9 @@ def patch_terminal_found(monitor_py: Path) -> bool:
         return True
 
     if _OLD_TERMINAL_FOUND_VERBOSE in text:
-        monitor_py.write_text(text.replace(_OLD_TERMINAL_FOUND_VERBOSE, compact, 1), encoding="utf-8")
+        monitor_py.write_text(
+            text.replace(_OLD_TERMINAL_FOUND_VERBOSE, compact, 1), encoding="utf-8"
+        )
         print("monitor.py: upgraded terminal_found to compact stderr lines")
         return True
 
@@ -530,14 +542,14 @@ def _facebook_search_block_new() -> str:
         "                time.sleep(5)\n"
         f"                # {SENTINEL_FACEBOOK} (set AIMM_MANUAL_SEARCH_FALLBACK=1 to prompt when zero listings)\n"
         "                _manual_fb = (\n"
-        "                    __import__(\"os\")\n"
-        "                    .environ.get(\"AIMM_MANUAL_SEARCH_FALLBACK\", \"\")\n"
+        '                    __import__("os")\n'
+        '                    .environ.get("AIMM_MANUAL_SEARCH_FALLBACK", "")\n'
         "                    .strip()\n"
         "                    .lower()\n"
-        "                    in (\"1\", \"true\", \"yes\")\n"
+        '                    in ("1", "true", "yes")\n'
         "                )\n"
         "                if not found_listings and _manual_fb:\n"
-        "                    _sys_fb = __import__(\"sys\")\n"
+        '                    _sys_fb = __import__("sys")\n'
         "                    _fb_msg = (\n"
         '                        "[Search] Parsed zero listings from the automated Marketplace URL. "\n'
         '                        f"phrase={search_phrase!r} city={city!r}. "\n'

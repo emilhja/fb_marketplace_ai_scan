@@ -1,3 +1,5 @@
+"""AI response parsing and backend abstractions for listing evaluation."""
+
 import re
 import time
 from dataclasses import asdict, dataclass, field
@@ -23,6 +25,7 @@ _FORM_ANY_LINE_RE = re.compile(r"(?im)^\s*Form:.*$")
 
 
 def parse_listing_kind(answer: str) -> str:
+    """Extract the optional `Form:` classification from a model completion."""
     m = _FORM_LINE_RE.search(answer or "")
     if not m:
         return "unknown"
@@ -30,6 +33,7 @@ def parse_listing_kind(answer: str) -> str:
 
 
 def _strip_form_lines(text: str) -> str:
+    """Remove `Form:` metadata lines before comment parsing."""
     return _FORM_ANY_LINE_RE.sub("", text).strip()
 
 
@@ -78,6 +82,8 @@ class AIServiceProvider(Enum):
 
 @dataclass
 class AIResponse:
+    """Normalized AI evaluation returned by a configured backend."""
+
     score: int
     comment: str
     name: str = ""
@@ -90,10 +96,12 @@ class AIResponse:
 
     @property
     def conclusion(self: "AIResponse") -> str:
+        """Map the numeric score to a stable human-readable verdict."""
         return _SCORE_TO_CONCLUSION.get(self.score, "Unknown rating")
 
     @property
     def style(self: "AIResponse") -> str:
+        """Return the log/display style associated with the response score."""
         if self.comment == self.NOT_EVALUATED:
             return "dim"
         if self.score < 3:
@@ -104,6 +112,7 @@ class AIResponse:
 
     @property
     def stars(self: "AIResponse") -> str:
+        """Render the score as five HTML stars for email notifications."""
         full_stars = self.score
         empty_stars = 5 - full_stars
         return (
@@ -145,6 +154,8 @@ class AIResponse:
 
 @dataclass
 class AIConfig(BaseConfig):
+    """Base configuration shared by all AI providers."""
+
     # this argument is required
 
     api_key: str | None = None
@@ -218,6 +229,8 @@ TAIConfig = TypeVar("TAIConfig", bound=AIConfig)
 
 
 class AIBackend(Generic[TAIConfig]):
+    """Base AI backend interface used by the Marketplace monitor."""
+
     def __init__(self: "AIBackend", config: AIConfig, logger: Logger | None = None) -> None:
         self.config = config
         self.logger = logger

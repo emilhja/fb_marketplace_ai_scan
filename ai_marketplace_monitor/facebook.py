@@ -1,4 +1,5 @@
 import datetime
+import html
 import os
 import re
 import sys
@@ -333,9 +334,7 @@ class FacebookMarketplace(Marketplace):
                 self.logger.error(f"""{hilight("[Login]", "fail")} {e}""")
 
         # in case there is a need to enter additional information
-        login_wait_time = (
-            60 if self.config.login_wait_time is None else self.config.login_wait_time
-        )
+        login_wait_time = 60 if self.config.login_wait_time is None else self.config.login_wait_time
         if login_wait_time > 0:
             if self.logger:
                 self.logger.info(
@@ -547,7 +546,9 @@ class FacebookMarketplace(Marketplace):
                         found[listing.post_url.split("?")[0]] = True
                         _serp_count += 1
                         # filter by title and location; skip keyword filtering since we do not have description yet.
-                        if not self.check_listing(listing, item_config, description_available=False):
+                        if not self.check_listing(
+                            listing, item_config, description_available=False
+                        ):
                             counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
                             continue
                         # Shallow stable-skip: if PG confirms same price + prior AI eval, the
@@ -753,8 +754,7 @@ class FacebookSearchResultPage(WebPage):
         heading = self._serp_collection_heading()
         if heading.count() > 0:
             try:
-                heading.first.evaluate(
-                    """(heading) => {
+                heading.first.evaluate("""(heading) => {
                         let n = heading;
                         for (let p = heading; p; p = p.parentElement) {
                             if (!p.parentElement) break;
@@ -767,22 +767,17 @@ class FacebookSearchResultPage(WebPage):
                             }
                         }
                         n.scrollTop = n.scrollHeight;
-                    }"""
-                )
+                    }""")
             except Exception as e:
                 if self.logger:
                     self.logger.debug(
                         f"{hilight('[Retrieve]', 'dim')} SERP inner scroll failed: {e}"
                     )
         try:
-            self.page.evaluate(
-                "window.scrollBy(0, Math.floor((window.innerHeight || 800) * 0.9))"
-            )
+            self.page.evaluate("window.scrollBy(0, Math.floor((window.innerHeight || 800) * 0.9))")
         except Exception as e:
             if self.logger:
-                self.logger.debug(
-                    f"{hilight('[Retrieve]', 'dim')} SERP window scroll failed: {e}"
-                )
+                self.logger.debug(f"{hilight('[Retrieve]', 'dim')} SERP window scroll failed: {e}")
         try:
             vp = self.page.viewport_size
             if vp:
@@ -793,9 +788,103 @@ class FacebookSearchResultPage(WebPage):
                 self.page.mouse.wheel(0, 2800)
         except Exception as e:
             if self.logger:
+                self.logger.debug(f"{hilight('[Retrieve]', 'dim')} SERP mouse wheel failed: {e}")
+
+    @staticmethod
+    def _normalize_serp_text_lines(text: str) -> list[str]:
+        lines: list[str] = []
+        for raw_line in text.splitlines():
+            line = re.sub(r"\s+", " ", raw_line).strip()
+            if not line:
+                continue
+            if lines and lines[-1] == line:
+                continue
+            lines.append(line)
+        return lines
+
+    @staticmethod
+    def _is_serp_price_line(line: str) -> bool:
+        normalized = re.sub(r"\s+", " ", line).strip()
+        low = normalized.lower()
+        has_currency_marker = any(
+            token in low
+            for token in (" kr", "kr ", "sek", "usd", "eur", "€", "$", "£", "gratis", "free")
+        )
+        numeric_only = (
+            re.fullmatch(r"\d[\d\s.,]*(?:\s*[-–—]\s*\d[\d\s.,]*)?", normalized) is not None
+        )
+        if not has_currency_marker and not numeric_only:
+            return False
+
+        current, original = parse_listing_prices(line)
+        if current == "**unspecified**":
+            return True
+        if original:
+            return True
+        return current.isdigit() and current != line.strip()
+
+    @classmethod
+    def _extract_serp_text_fields(cls, text: str) -> tuple[str, str, str]:
+        lines = cls._normalize_serp_text_lines(text)
+        if not lines:
+            return "", "", ""
+
+        price_idx = next(
+            (idx for idx, line in enumerate(lines) if cls._is_serp_price_line(line)), -1
+        )
+        raw_price = lines[price_idx] if price_idx >= 0 else ""
+
+        title_idx = -1
+        for idx in range(price_idx + 1 if price_idx >= 0 else 0, len(lines)):
+            if cls._is_serp_price_line(lines[idx]):
+                continue
+            title_idx = idx
+            break
+
+        title = lines[title_idx] if title_idx >= 0 else ""
+
+        location = ""
+        if title_idx >= 0:
+            for idx in range(title_idx + 1, len(lines)):
+                if cls._is_serp_price_line(lines[idx]):
+                    continue
+                location = lines[idx]
+                break
+
+        return raw_price, title, location
+
+    def _extract_serp_card_fields(
+        self: "FacebookSearchResultPage", listing: ElementHandle, atag: ElementHandle
+    ) -> tuple[str, str, str]:
+        raw_price = ""
+        title = ""
+        location = ""
+
+        try:
+            details_divs = atag.query_selector_all(":scope > :first-child > div")
+            if len(details_divs) > 1:
+                details = details_divs[1]
+                divs = details.query_selector_all(":scope > div")
+                raw_price = "" if len(divs) < 1 else divs[0].text_content() or ""
+                title = "" if len(divs) < 2 else divs[1].text_content() or ""
+                location = "" if len(divs) < 3 else (divs[2].text_content() or "")
+        except Exception as e:
+            if self.logger:
                 self.logger.debug(
-                    f"{hilight('[Retrieve]', 'dim')} SERP mouse wheel failed: {e}"
+                    f"{hilight('[Retrieve]', 'dim')} SERP structured card parse fallback: {e}"
                 )
+
+        if raw_price and title:
+            return raw_price, title, location
+
+        fallback_price, fallback_title, fallback_location = self._extract_serp_text_fields(
+            listing.text_content() or atag.text_content() or ""
+        )
+        return (
+            raw_price or fallback_price,
+            title or fallback_title,
+            location or fallback_location,
+        )
 
     def _handles_to_listings(
         self: "FacebookSearchResultPage", valid_listings: List[ElementHandle]
@@ -804,20 +893,17 @@ class FacebookSearchResultPage(WebPage):
         listings: List[Listing] = []
         for idx, listing in enumerate(valid_listings):
             try:
-                atag = listing.query_selector(
-                    ":scope > :first-child > :first-child > :first-child > :first-child > :first-child > :first-child > :first-child > :first-child"
-                )
+                atag = listing.query_selector("a[href*='/marketplace/item/']")
+                if not atag:
+                    atag = listing.query_selector(
+                        ":scope > :first-child > :first-child > :first-child > :first-child > :first-child > :first-child > :first-child > :first-child"
+                    )
                 if not atag:
                     continue
                 post_url = atag.get_attribute("href") or ""
-                details_divs = atag.query_selector_all(":scope > :first-child > div")
-                if not details_divs:
+                if "/marketplace/item/" not in post_url:
                     continue
-                details = details_divs[1]
-                divs = details.query_selector_all(":scope > div")
-                raw_price = "" if len(divs) < 1 else divs[0].text_content() or ""
-                title = "" if len(divs) < 2 else divs[1].text_content() or ""
-                location = "" if len(divs) < 3 else (divs[2].text_content() or "")
+                raw_price, title, location = self._extract_serp_card_fields(listing, atag)
 
                 img = listing.query_selector("img")
                 image = img.get_attribute("src") if img else ""
@@ -921,9 +1007,7 @@ class FacebookSearchResultPage(WebPage):
             "false",
             "no",
         )
-        max_rounds = int(
-            (os.environ.get("AIMM_FB_SERP_SCROLL_MAX_ROUNDS", "150") or "150").strip()
-        )
+        max_rounds = int((os.environ.get("AIMM_FB_SERP_SCROLL_MAX_ROUNDS", "150") or "150").strip())
         idle_need = int((os.environ.get("AIMM_FB_SERP_SCROLL_IDLE", "6") or "6").strip())
         pause = float((os.environ.get("AIMM_FB_SERP_SCROLL_PAUSE", "0.55") or "0.55").strip())
         log_every = max(1, int((os.environ.get("AIMM_FB_SERP_LOG_EVERY", "8") or "8").strip()))
@@ -1040,7 +1124,17 @@ class FacebookItemPage(WebPage):
     def get_condition(self: "FacebookItemPage") -> str:
         raise NotImplementedError("get_condition is not implemented for this page")
 
+    def get_availability(self: "FacebookItemPage") -> str:
+        return "Till Salu"
+
+    def check_is_tradera(self: "FacebookItemPage") -> bool:
+        return False
+
     def parse(self: "FacebookItemPage", post_url: str) -> Listing:
+        removed_listing = build_removed_listing(self.page, post_url, self.translator, self.logger)
+        if removed_listing is not None:
+            return removed_listing
+
         if not self.verify_layout():
             raise ValueError("Layout mismatch")
 
@@ -1053,9 +1147,12 @@ class FacebookItemPage(WebPage):
             raise ValueError(f"Failed to parse {post_url}")
 
         price, original_price = parse_listing_prices(price_raw)
+        availability = self.get_availability()
 
         if self.logger:
-            self.logger.info(f"{hilight('[Retrieve]', 'succ')} Parsing {hilight(title)}")
+            self.logger.info(
+                f"{hilight('[Retrieve]', 'succ')} Parsing {hilight(title)} (Status: {availability})"
+            )
         res = Listing(
             marketplace="facebook",
             name="",
@@ -1069,10 +1166,51 @@ class FacebookItemPage(WebPage):
             condition=self.get_condition(),
             description=description,
             seller=self.get_seller(),
+            availability=availability,
+            is_tradera=self.check_is_tradera(),
         )
         if self.logger:
             self.logger.debug(f"{hilight('[Retrieve]', 'succ')} {pretty_repr(res)}")
         return cast(Listing, res)
+
+
+def build_removed_listing(
+    page: Page,
+    post_url: str,
+    translator: Translator | None = None,
+    logger: Logger | None = None,
+) -> Listing | None:
+    html = (page.content() or "").lower()
+    missing_indicators = [
+        "den här annonsen är inte längre tillgänglig",
+        "det här inlägget finns inte längre",
+        "annonsen är inte längre tillgänglig",
+        "listing no longer available",
+        "no longer available",
+        "is not available right now",
+        "content isn't available",
+        "this content isn't available",
+    ]
+    if not any(ind in html for ind in missing_indicators):
+        return None
+    if logger:
+        logger.info(f"{hilight('[Retrieve]', 'info')} Listing {post_url} is marked as Borttagen")
+    translate = translator or (lambda text: text)
+    return Listing(
+        marketplace="facebook",
+        name="",
+        id=post_url.split("?")[0].rstrip("/").split("/")[-1],
+        title=translate("Borttagen"),
+        image="",
+        price="",
+        original_price="",
+        post_url=post_url,
+        location="",
+        condition="",
+        description=translate("Det här inlägget finns inte längre"),
+        seller="",
+        availability="Borttagen",
+    )
 
 
 class FacebookRegularItemPage(FacebookItemPage):
@@ -1085,7 +1223,26 @@ class FacebookRegularItemPage(FacebookItemPage):
     def get_title(self: "FacebookRegularItemPage") -> str:
         try:
             h1_element = self.page.query_selector_all("h1")[-1]
-            return h1_element.text_content() or self.translator("**unspecified**")
+            title = h1_element.text_content() or self.translator("**unspecified**")
+
+            # Normalize title to handle non-breaking spaces and different dot characters
+            # Facebook often uses "Såld · " where the space is \xa0
+            title_clean = title.replace("\xa0", " ").strip()
+            title_lower = title_clean.lower()
+
+            # Common prefixes in Swedish/English
+            prefixes = ["såld ·", "sold ·", "såld", "sold"]
+            for p in prefixes:
+                if title_lower.startswith(p):
+                    # Find where the prefix ends (usually after the dot or just the word)
+                    if " · " in title_clean:
+                        title = title_clean.split(" · ", 1)[1]
+                    elif " ·" in title_clean:
+                        title = title_clean.split(" ·", 1)[1]
+                    else:
+                        title = title_clean[len(p) :].strip()
+                    break
+            return title.strip()
         except KeyboardInterrupt:
             raise
         except Exception as e:
@@ -1103,6 +1260,58 @@ class FacebookRegularItemPage(FacebookItemPage):
             if self.logger:
                 self.logger.debug(f"{hilight('[Retrieve]', 'fail')} {e}")
             return ""
+
+    def get_availability(self: "FacebookRegularItemPage") -> str:
+        try:
+            # 1. Check title for "Sold" prefix
+            h1_element = self.page.query_selector_all("h1")[-1]
+            title_header = (h1_element.text_content() or "").replace("\xa0", " ").lower()
+            if title_header.startswith("såld") or title_header.startswith("sold"):
+                return "Såld"
+
+            # 2. Check for "Message" button (indicator of ACTIVE listing)
+            # Most reliable way to know it's NOT sold is that you can still message the seller
+            active_button_locators = [
+                'div[aria-label="Skicka meddelande"]',
+                'div[aria-label="Message"]',
+                'div[role="button"]:has-text("Skicka meddelande")',
+                'div[role="button"]:has-text("Message")',
+                'div[role="button"]:has-text("Visa på Tradera")',
+                'div[role="button"]:has-text("View on Tradera")',
+                'a:has-text("Visa på Tradera")',
+                'a:has-text("View on Tradera")',
+            ]
+
+            has_active_button = False
+            for selector in active_button_locators:
+                try:
+                    if self.page.locator(selector).first.is_visible(timeout=500):
+                        has_active_button = True
+                        break
+                except:
+                    continue
+
+            if has_active_button:
+                return "Till Salu"
+
+            # 3. Check for specific "Sold" banner text in the main detail area
+            # (avoid the whole page content to prevent false positives from suggestions)
+            detail_pane = self.page.locator("h1").locator(".. >> .. >> ..")
+            pane_text = (detail_pane.text_content() or "").lower()
+            sold_banners = [
+                "den här artikeln har sålts",
+                "this item was sold",
+                "artikeln har sålts",
+            ]
+            if any(b in pane_text for b in sold_banners):
+                return "Såld"
+        except Exception as e:
+            if self.logger:
+                self.logger.debug(f"[Availability Check] Error: {e}")
+            pass
+
+        # Default back to Till Salu if we saw an active button or found no strong sold signals
+        return "Till Salu"
 
     def get_image_url(self: "FacebookRegularItemPage") -> str:
         try:
@@ -1132,6 +1341,40 @@ class FacebookRegularItemPage(FacebookItemPage):
             "mer information från tradera",
         )
         return any(p in low for p in noise)
+
+    def check_is_tradera(self: "FacebookRegularItemPage") -> bool:
+        try:
+            # 1. Check seller name
+            seller = self.get_seller().lower()
+            if "tradera" in seller:
+                return True
+
+            # 2. Check for "Visa på Tradera" button
+            tradera_buttons = [
+                'div[role="button"]:has-text("Visa på Tradera")',
+                'div[role="button"]:has-text("View on Tradera")',
+                'a:has-text("Visa på Tradera")',
+                'a:has-text("View on Tradera")',
+            ]
+            for selector in tradera_buttons:
+                try:
+                    if self.page.locator(selector).first.is_visible(timeout=500):
+                        return True
+                except:
+                    continue
+
+            # 3. Check for specific text in description or seller info
+            html = (self.page.content() or "").lower()
+            if (
+                "shoppa säljinlägg från tradera" in html
+                or "information om säljaren tradera" in html
+                or "mer information från tradera" in html
+                or "more information from tradera" in html
+            ):
+                return True
+        except Exception:
+            pass
+        return False
 
     def _seller_from_tradera_crosslist(self: "FacebookRegularItemPage") -> str:
         """Seller name on Marketplace listings mirrored from Tradera (no FB profile link)."""
@@ -1238,7 +1481,154 @@ class FacebookRegularItemPage(FacebookItemPage):
             except Exception:
                 pass
 
+    @staticmethod
+    def _normalize_text_line(line: str) -> str:
+        return re.sub(r"\s+", " ", line.replace("\xa0", " ")).strip(" :\u200b\t\r\n")
+
+    def _page_text_lines(self: "FacebookRegularItemPage") -> List[str]:
+        texts: List[str] = []
+        try:
+            body_text = self.page.locator("body").text_content()
+            if isinstance(body_text, str) and body_text.strip():
+                texts.append(body_text)
+        except Exception:
+            pass
+        try:
+            page_html = self.page.content() or ""
+            if page_html:
+                text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", page_html)
+                text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+                text = re.sub(
+                    r"(?i)</?(div|p|li|ul|ol|h1|h2|h3|h4|h5|h6|section|article|span|a|button|label|dt|dd|tr|td|th)>",
+                    "\n",
+                    text,
+                )
+                text = re.sub(r"(?s)<[^>]+>", " ", text)
+                text = html.unescape(text)
+                texts.append(text)
+        except Exception:
+            pass
+
+        lines: List[str] = []
+        seen: set[str] = set()
+        for text in texts:
+            for raw in text.splitlines():
+                line = self._normalize_text_line(raw)
+                if line and line not in seen:
+                    lines.append(line)
+                    seen.add(line)
+        return lines
+
+    def _tradera_text_lines(self: "FacebookRegularItemPage") -> List[str]:
+        lines = self._page_text_lines()
+        if not any("tradera" in line.lower() for line in lines):
+            return []
+        return lines
+
+    def _extract_labeled_text_block(
+        self: "FacebookRegularItemPage",
+        labels: List[str],
+        stop_labels: List[str],
+    ) -> str:
+        label_set = {self._normalize_text_line(label).lower() for label in labels if label}
+        stop_set = {self._normalize_text_line(label).lower() for label in stop_labels if label}
+        if not label_set:
+            return ""
+
+        lines = self._tradera_text_lines()
+        for idx, line in enumerate(lines):
+            normalized_line = self._normalize_text_line(line)
+            normalized_low = normalized_line.lower()
+            if normalized_low in label_set:
+                values: List[str] = []
+                for candidate in lines[idx + 1 :]:
+                    normalized = self._normalize_text_line(candidate).lower()
+                    if not normalized:
+                        continue
+                    if normalized in stop_set:
+                        break
+                    values.append(candidate)
+                if values:
+                    return "\n".join(values).strip()
+                continue
+
+            for label in label_set:
+                prefix = f"{label} "
+                if normalized_low.startswith(prefix):
+                    inline_value = normalized_line[len(prefix) :].strip()
+                    if inline_value and inline_value.lower() not in stop_set:
+                        return inline_value
+        return ""
+
+    def _tradera_common_stop_labels(self: "FacebookRegularItemPage") -> List[str]:
+        return [
+            "Mer information från Tradera",
+            "More information from Tradera",
+            self.translator("Description"),
+            "Beskrivning",
+            self.translator("Details"),
+            "Detaljer",
+            self.translator("Condition"),
+            "Skick",
+            "Leverans",
+            "Delivery",
+            "Plats",
+            "Location",
+            self.translator("Information about the seller Tradera"),
+            "Information om säljaren Tradera",
+            self.translator("See more"),
+            "See more",
+            "Visa på Tradera",
+            "View on Tradera",
+        ]
+
+    def _get_tradera_description_block(self: "FacebookRegularItemPage") -> str:
+        return self._extract_labeled_text_block(
+            labels=[self.translator("Description"), "Beskrivning"],
+            stop_labels=self._tradera_common_stop_labels(),
+        )
+
+    def _get_tradera_condition(self: "FacebookRegularItemPage") -> str:
+        return self._extract_labeled_text_block(
+            labels=[self.translator("Condition"), "Skick"],
+            stop_labels=self._tradera_common_stop_labels(),
+        )
+
+    def _get_tradera_delivery(self: "FacebookRegularItemPage") -> str:
+        return self._extract_labeled_text_block(
+            labels=["Leverans", "Delivery"],
+            stop_labels=self._tradera_common_stop_labels(),
+        )
+
+    def _get_tradera_location(self: "FacebookRegularItemPage") -> str:
+        location = self._extract_labeled_text_block(
+            labels=["Plats", "Location"],
+            stop_labels=self._tradera_common_stop_labels(),
+        )
+        if not location:
+            return ""
+        approx_labels = {label.lower() for label in self._location_labels()}
+        approx_labels.update({"plats är ungefärlig", "location is approximate"})
+        filtered = [
+            line
+            for line in location.splitlines()
+            if self._normalize_text_line(line).lower() not in approx_labels
+        ]
+        return "\n".join(filtered).strip()
+
     def get_description(self: "FacebookRegularItemPage") -> str:
+        if self.check_is_tradera():
+            description = self._get_tradera_description_block()
+            extras: List[str] = []
+            condition = self._get_tradera_condition()
+            if condition:
+                extras.append(f'{self.translator("Condition")}\n{condition}')
+            delivery = self._get_tradera_delivery()
+            if delivery:
+                extras.append(f"Leverans\n{delivery}")
+            if description or extras:
+                parts = [part for part in [description, *extras] if part]
+                return "\n\n".join(parts).strip()
         try:
             # Find the span with text "condition", then parent, then next...
             description_element = self.page.locator(
@@ -1260,6 +1650,9 @@ class FacebookRegularItemPage(FacebookItemPage):
             return ""
 
     def get_condition(self: "FacebookRegularItemPage") -> str:
+        tradera_condition = self._get_tradera_condition()
+        if tradera_condition:
+            return tradera_condition
         try:
             if self.logger:
                 self.logger.debug(f"{hilight('[Debug]', 'info')} Getting condition info...")
@@ -1287,24 +1680,85 @@ class FacebookRegularItemPage(FacebookItemPage):
                 )
             return ""
 
-    def get_location(self: "FacebookRegularItemPage") -> str:
-        try:
-            # look for "Location is approximate", then find its neighbor
-            approximate_element = self.page.locator(
-                f'span:text("{self.translator("Location is approximate")}")'
-            )
-            return self._parent_with_cond(
-                approximate_element,
-                lambda x: len(x) == 2
-                and self.translator("Location is approximate") in (x[1].text_content() or ""),
-                0,
-            )
-        except KeyboardInterrupt:
-            raise
-        except Exception as e:
-            if self.logger:
-                self.logger.debug(f"{hilight('[Retrieve]', 'fail')} {e}")
+    def _location_labels(self: "FacebookRegularItemPage") -> List[str]:
+        labels = [
+            self.translator("Location is approximate"),
+            "Location is approximate",
+            "Plats är ungefärlig",
+        ]
+        return [label.strip() for label in labels if isinstance(label, str) and label.strip()]
+
+    def _extract_location_from_text_block(self: "FacebookRegularItemPage", text: str | None) -> str:
+        if not text:
             return ""
+
+        labels = self._location_labels()
+        label_lows = {label.lower() for label in labels}
+        noise = {
+            *label_lows,
+            self.translator("See more").strip().lower(),
+            "see more",
+        }
+        lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
+        lines = [line for line in lines if line]
+
+        for idx, line in enumerate(lines):
+            low = line.lower()
+            matched_label = next((label for label in labels if label.lower() in low), None)
+            if matched_label is None:
+                continue
+
+            before = line[: low.index(matched_label.lower())].strip(" ,.-")
+            after = line[low.index(matched_label.lower()) + len(matched_label) :].strip(" ,.-")
+            if before and before.lower() not in noise:
+                return before
+            for candidate in reversed(lines[:idx]):
+                if candidate.lower() not in noise:
+                    return candidate
+            if after and after.lower() not in noise:
+                return after
+            for candidate in lines[idx + 1 :]:
+                if candidate.lower() not in noise:
+                    return candidate
+        return ""
+
+    def _extract_location_near_element(
+        self: "FacebookRegularItemPage", element: Locator | ElementHandle | None
+    ) -> str:
+        if element is None:
+            return ""
+
+        parent: ElementHandle | None
+        if hasattr(element, "element_handle"):
+            parent = cast(Any, element).element_handle()
+        else:
+            parent = cast(Any, element)
+        for _ in range(10):
+            if parent is None:
+                break
+            location = self._extract_location_from_text_block(parent.text_content() or "")
+            if location:
+                return location
+            parent = parent.query_selector("xpath=..")
+        return ""
+
+    def get_location(self: "FacebookRegularItemPage") -> str:
+        tradera_location = self._get_tradera_location()
+        if tradera_location:
+            return tradera_location
+        labels = self._location_labels()
+        for label in labels:
+            try:
+                approximate_element = self.page.locator(f'span:text("{label}")')
+                location = self._extract_location_near_element(approximate_element)
+                if location:
+                    return location
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                if self.logger:
+                    self.logger.debug(f"{hilight('[Retrieve]', 'fail')} {e}")
+        return ""
 
 
 class FacebookRentalItemPage(FacebookRegularItemPage):
@@ -1522,4 +1976,4 @@ def parse_listing(
         except Exception:
             # try next page ayout
             continue
-    return None
+    return build_removed_listing(page, post_url, translator, logger)

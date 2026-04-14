@@ -38,5 +38,7 @@ class ListingIdentityTests(TestCase):
             condition="used",
             description="desc",
         )
-        self.assertEqual(normalize_url(listing.post_url), "https://www.facebook.com/marketplace/item/42/")
+        self.assertEqual(
+            normalize_url(listing.post_url), "https://www.facebook.com/marketplace/item/42/"
+        )
         self.assertEqual(listing_key_from_listing(listing), "facebook:42")

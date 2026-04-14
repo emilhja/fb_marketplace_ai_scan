@@ -11,6 +11,12 @@ function fmtDate(s: string) {
   return new Date(s).toLocaleString('sv-SE', { timeZone: 'Europe/Stockholm' })
 }
 
+function fmtChange(value: number | null) {
+  if (value === null) return '—'
+  if (value === 0) return '0'
+  return value > 0 ? `+${value}` : String(value)
+}
+
 export default function PriceHistoryPage() {
   const [data, setData] = useState<PagedResponse<PriceHistoryRow> | null>(null)
   const [loading, setLoading] = useState(false)
@@ -25,19 +31,34 @@ export default function PriceHistoryPage() {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setError(null)
-    const params: PriceHistoryParams = {
-      page,
-      page_size: PAGE_SIZE,
-      listing_id: listingId === '' ? undefined : listingId,
-      observed_from: observedFrom || undefined,
-      observed_to: observedTo || undefined,
-      sort_dir: sortDir,
+    async function loadPriceHistory() {
+      setLoading(true)
+      setError(null)
+      const params: PriceHistoryParams = {
+        page,
+        page_size: PAGE_SIZE,
+        listing_id: listingId === '' ? undefined : listingId,
+        observed_from: observedFrom || undefined,
+        observed_to: observedTo || undefined,
+        sort_dir: sortDir,
+      }
+      try {
+        const nextData = await fetchPriceHistory(params)
+        if (!cancelled) {
+          setData(nextData)
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(String(e))
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      }
     }
-    fetchPriceHistory(params)
-      .then(d => { if (!cancelled) { setData(d); setLoading(false) } })
-      .catch(e => { if (!cancelled) { setError(String(e)); setLoading(false) } })
+
+    void loadPriceHistory()
     return () => { cancelled = true }
   }, [page, listingId, observedFrom, observedTo, sortDir])
 
@@ -93,6 +114,8 @@ export default function PriceHistoryPage() {
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">ID</th>
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">Listing</th>
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">Price</th>
+              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">Previous price</th>
+              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">Changed by</th>
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">Observed at</th>
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">Link</th>
             </tr>
@@ -105,6 +128,12 @@ export default function PriceHistoryPage() {
                   <span className="font-medium text-gray-800 line-clamp-1">{row.listing_title || `#${row.listing_id}`}</span>
                 </td>
                 <td className="px-3 py-2 font-mono text-gray-700 whitespace-nowrap">{row.price}</td>
+                <td className="px-3 py-2 font-mono text-gray-500 whitespace-nowrap">{row.previous_price || '—'}</td>
+                <td className="px-3 py-2 font-mono whitespace-nowrap">
+                  <span className={row.changed_by === null ? 'text-gray-400' : row.changed_by > 0 ? 'text-red-600' : row.changed_by < 0 ? 'text-emerald-600' : 'text-gray-500'}>
+                    {fmtChange(row.changed_by)}
+                  </span>
+                </td>
                 <td className="px-3 py-2 text-gray-500 text-xs whitespace-nowrap">{fmtDate(row.observed_at)}</td>
                 <td className="px-3 py-2">
                   {row.canonical_post_url ? (
@@ -114,7 +143,7 @@ export default function PriceHistoryPage() {
               </tr>
             ))}
             {!loading && data?.items.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">No price history records found.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No price history records found.</td></tr>
             )}
           </tbody>
         </table>

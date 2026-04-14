@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import time
 from logging import Logger
@@ -21,6 +22,7 @@ from .notification import NotificationStatus
 from .notification import send_plain_alert
 from .pg_cache import (
     fetch_listing_price_state,
+    get_active_listings_for_revalidation,
     has_any_ai_evaluation_for_listing,
     observe_listing,
     record_notification_event,
@@ -68,6 +70,9 @@ class MarketplaceMonitor:
         self.playwright: Playwright = sync_playwright().start()
         self.browser: Browser | None = None
         self.logger = logger
+        self.repo_root = Path(__file__).resolve().parent.parent
+        self.backend_python = self.repo_root / "backend" / ".venv" / "bin" / "python"
+        self.rerun_queue_script = self.repo_root / "scripts" / "process_rerun_queue.py"
 
     def load_config_file(self: "MarketplaceMonitor") -> Config:
         """Load the configuration file."""
@@ -293,9 +298,7 @@ class MarketplaceMonitor:
                         f"""{hilight("[AI]", res.style)} {res.name or "AI"} concludes {hilight(f"{res.conclusion} ({res.score}): {res.comment}", res.style)} for listing {hilight(listing.title)} [kind={_aimm_k}].{_aimm_cm}"""
                     )
             if item_config.rating:
-                acceptable_rating = item_config.rating[
-                    0 if item_config.searched_count == 0 else -1
-                ]
+                acceptable_rating = item_config.rating[0 if item_config.searched_count == 0 else -1]
             elif marketplace_config.rating:
                 acceptable_rating = marketplace_config.rating[
                     0 if item_config.searched_count == 0 else -1
@@ -347,7 +350,9 @@ class MarketplaceMonitor:
                         record_notification_event(
                             listing=_li,
                             user_name=user,
-                            channel=_u.config.notify_with[0] if _u.config.notify_with else "unknown",
+                            channel=(
+                                _u.config.notify_with[0] if _u.config.notify_with else "unknown"
+                            ),
                             status="sent",
                             details={"count": len(new_listings), "item": item_config.name},
                             logger=self.logger,
@@ -357,7 +362,9 @@ class MarketplaceMonitor:
                         record_notification_event(
                             listing=_li,
                             user_name=user,
-                            channel=_u.config.notify_with[0] if _u.config.notify_with else "unknown",
+                            channel=(
+                                _u.config.notify_with[0] if _u.config.notify_with else "unknown"
+                            ),
                             status="failed",
                             details={"count": len(new_listings), "item": item_config.name},
                             logger=self.logger,
@@ -365,6 +372,75 @@ class MarketplaceMonitor:
                     raise
 
         time.sleep(5)
+
+    def revalidate_active_listings(self: "MarketplaceMonitor") -> None:
+        """Fetch older active listings from DB and re-check their status."""
+        if self.logger:
+            self.logger.info(
+                f"{hilight('[Revalidate]', 'info')} Checking status of older active listings..."
+            )
+
+        listings = get_active_listings_for_revalidation(limit=20, logger=self.logger)
+        if not listings:
+            if self.logger:
+                self.logger.info(
+                    f"{hilight('[Revalidate]', 'info')} No active listings need re-validation."
+                )
+            return
+
+        assert self.config is not None
+        for listing in listings:
+            try:
+                # Find matching marketplace
+                marketplace_name = listing.marketplace
+                if marketplace_name not in self.config.marketplace:
+                    continue
+
+                marketplace_config = self.config.marketplace[marketplace_name]
+                marketplace_class = supported_marketplaces[marketplace_name]
+
+                if marketplace_name in self.active_marketplaces:
+                    marketplace = self.active_marketplaces[marketplace_name]
+                else:
+                    marketplace = marketplace_class(
+                        marketplace_name, self.browser, self.keyboard_monitor, self.logger
+                    )
+                    self.active_marketplaces[marketplace_name] = marketplace
+
+                marketplace.configure(
+                    marketplace_config,
+                    translator=self._select_translator(marketplace_config.language),
+                )
+
+                if self.browser is None:
+                    self.browser = self._launch_browser()
+                    marketplace.set_browser(self.browser)
+
+                # Re-fetch details
+                # We use a dummy item_config since we just want to update the listing status in DB
+                dummy_item = next(iter(self.config.item.values()))
+                updated_listing = marketplace.get_listing_details(listing.post_url, dummy_item)
+
+                # get_listing_details returns (Listing, from_cache) - we want the direct fetch
+                if isinstance(updated_listing, tuple):
+                    updated_listing = updated_listing[0]
+
+                # observe_listing will handle the UPSERT and history record if status changed
+                observe_listing(updated_listing, logger=self.logger)
+
+                if self.logger:
+                    status_color = "succ" if updated_listing.availability == "Till Salu" else "fail"
+                    self.logger.info(
+                        f"{hilight('[Revalidate]', status_color)} Updated status for {hilight(updated_listing.title)}: {updated_listing.availability}"
+                    )
+
+                # Pacing
+                time.sleep(2)
+
+            except Exception as e:
+                if self.logger:
+                    self.logger.debug(f"[Revalidate] Failed to re-validate {listing.post_url}: {e}")
+                continue
 
     def _select_translator(
         self: "MarketplaceMonitor", language: str | None = None
@@ -500,6 +576,10 @@ class MarketplaceMonitor:
                         item_config,
                     ).tag(item_config.name)
 
+        # Schedule Re-validation loop
+        # Run every 2 hours by default, or use a config if we add one later
+        schedule.every(2).hours.do(self.revalidate_active_listings).tag("revalidation")
+
     def handle_pause(self: "MarketplaceMonitor") -> None:
         """Handle interruption signal."""
         if self.keyboard_monitor is None or not self.keyboard_monitor.is_paused():
@@ -582,6 +662,7 @@ class MarketplaceMonitor:
                         )
                     schedule.clear()
                     break
+            self._process_rerun_queue_once()
             if not schedule.get_jobs():
                 continue
             # subsequent runs will be scheduled runs
@@ -590,9 +671,7 @@ class MarketplaceMonitor:
                 for job in schedule.jobs:
                     if job.next_run is None:
                         continue
-                    if next_job is None or (
-                        next_job.next_run and next_job.next_run > job.next_run
-                    ):
+                    if next_job is None or (next_job.next_run and next_job.next_run > job.next_run):
                         next_job = job
 
                 if next_job is None:
@@ -635,7 +714,36 @@ class MarketplaceMonitor:
                     self.keyboard_monitor.set_paused(True)
 
                 self.handle_pause()
+                pending_jobs = [job for job in schedule.jobs if job.should_run]
                 schedule.run_pending()
+                if pending_jobs:
+                    self._process_rerun_queue_once()
+
+    def _process_rerun_queue_once(self: "MarketplaceMonitor") -> None:
+        if not self.backend_python.exists() or not self.rerun_queue_script.exists():
+            return
+
+        env = os.environ.copy()
+        existing_pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = (
+            f"{self.repo_root}{os.pathsep}{existing_pythonpath}"
+            if existing_pythonpath
+            else str(self.repo_root)
+        )
+        try:
+            subprocess.run(
+                [str(self.backend_python), str(self.rerun_queue_script)],
+                check=True,
+                cwd=self.repo_root,
+                env=env,
+            )
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            if self.logger:
+                self.logger.error(
+                    f"""{hilight("[Rerun Queue]", "fail")} Failed to process queued reruns: {exc}"""
+                )
 
     def stop_monitor(self: "MarketplaceMonitor") -> None:
         """Stop the monitor."""
@@ -704,7 +812,7 @@ class MarketplaceMonitor:
                     if self.browser is None:
                         if self.logger:
                             self.logger.info(
-                                f"""{hilight("[Search]", "info")} Starting a browser because the item was not checked before."""
+                                f"""{hilight("[Search]", "info")} Starting a new browser session for this rerun because listing details are not cached."""
                             )
                         self.browser = self._launch_browser()
                         marketplace.set_browser(self.browser)
@@ -769,9 +877,7 @@ class MarketplaceMonitor:
                         )
                 # notification status?
                 users_to_notify = (
-                    item_config.notify
-                    or marketplace_config.notify
-                    or list(self.config.user.keys())
+                    item_config.notify or marketplace_config.notify or list(self.config.user.keys())
                 )
                 # for notification usages
                 listing.name = item_config.name

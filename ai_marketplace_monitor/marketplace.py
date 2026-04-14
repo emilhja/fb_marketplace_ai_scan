@@ -109,9 +109,7 @@ class MarketItemCommonConfig(BaseConfig):
             self.radius = [self.radius]
 
         if not all(isinstance(x, int) for x in self.radius):
-            raise ValueError(
-                f"Item {hilight(self.name)} radius must be one or a list of integers."
-            )
+            raise ValueError(f"Item {hilight(self.name)} radius must be one or a list of integers.")
 
         if len(self.radius) != len(self.search_city):
             raise ValueError(

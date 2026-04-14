@@ -1,4 +1,5 @@
 """GET /api/notification-events."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -27,20 +28,17 @@ def list_notification_events(
     sent_to: datetime | None = Query(None),
     sort_dir: Literal["asc", "desc"] = Query("desc"),
 ):
-    q = (
-        select(
-            NotificationEvent.id,
-            NotificationEvent.listing_id,
-            Listing.title.label("listing_title"),
-            Listing.canonical_post_url,
-            NotificationEvent.user_name,
-            NotificationEvent.channel,
-            NotificationEvent.status,
-            NotificationEvent.details,
-            NotificationEvent.sent_at,
-        )
-        .join(Listing, Listing.id == NotificationEvent.listing_id)
-    )
+    q = select(
+        NotificationEvent.id,
+        NotificationEvent.listing_id,
+        Listing.title.label("listing_title"),
+        Listing.canonical_post_url,
+        NotificationEvent.user_name,
+        NotificationEvent.channel,
+        NotificationEvent.status,
+        NotificationEvent.details,
+        NotificationEvent.sent_at,
+    ).join(Listing, Listing.id == NotificationEvent.listing_id)
 
     if listing_id is not None:
         q = q.where(NotificationEvent.listing_id == listing_id)
@@ -57,13 +55,9 @@ def list_notification_events(
     total: int = db.execute(select(func.count()).select_from(count_sq)).scalar_one()
 
     order = (
-        NotificationEvent.sent_at.asc()
-        if sort_dir == "asc"
-        else NotificationEvent.sent_at.desc()
+        NotificationEvent.sent_at.asc() if sort_dir == "asc" else NotificationEvent.sent_at.desc()
     )
-    rows = db.execute(
-        q.order_by(order).offset((page - 1) * page_size).limit(page_size)
-    ).all()
+    rows = db.execute(q.order_by(order).offset((page - 1) * page_size).limit(page_size)).all()
 
     items = [
         NotificationEventRow(

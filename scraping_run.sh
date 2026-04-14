@@ -12,6 +12,7 @@ fi
 source "$SCRIPT_DIR/.venv/bin/activate"
 
 export PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+BACKEND_PYTHON="$SCRIPT_DIR/backend/.venv/bin/python"
 
 python3 "$SCRIPT_DIR/scripts/init_postgres_cache.py"
 
@@ -23,3 +24,4 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
 fi
 
 python3 -m ai_marketplace_monitor.cli "$@"
+"$BACKEND_PYTHON" "$SCRIPT_DIR/scripts/process_rerun_queue.py"

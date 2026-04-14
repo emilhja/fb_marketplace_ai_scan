@@ -1,0 +1,38 @@
+[tool.black]
+line-length = 100
+target-version = ["py311", "py312"]
+extend-exclude = '''
+/(
+  \.venv
+  | backend/\.venv
+  | frontend/node_modules
+  | frontend/dist
+  | dev_documents
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [
+  ".venv",
+  "backend/.venv",
+  "frontend/node_modules",
+  "frontend/dist",
+  "dev_documents",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"ai_marketplace_monitor/facebook.py" = ["E722"]
+"ai_marketplace_monitor/user.py" = ["E722"]
+"backend/alembic/versions/0001_baseline.py" = ["F401"]
+"backend/app/routers/listings.py" = ["F541"]
+"scripts/rescrape_*.py" = ["E402"]
+"tests/*.py" = ["E402", "F401", "F821", "F841"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

@@ -10,6 +10,7 @@ Covers:
 - FacebookMarketplace.search skips get_listing_details for stable listings when flag is on.
 - FacebookMarketplace.search does NOT skip get_listing_details for new/changed listings when flag is on.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -18,10 +19,10 @@ from unittest.mock import MagicMock, patch, call
 from ai_marketplace_monitor.listing import Listing
 from ai_marketplace_monitor.pg_cache import ListingPriceState
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_listing(
     price: str = "5000",
@@ -46,44 +47,72 @@ def _make_listing(
 # should_skip_stable_detail_fetch unit tests
 # ---------------------------------------------------------------------------
 
+
 class ShouldSkipStableTests(unittest.TestCase):
     def test_returns_false_when_cache_disabled(self) -> None:
         with patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=False):
             from ai_marketplace_monitor.pg_cache import should_skip_stable_detail_fetch
+
             result = should_skip_stable_detail_fetch(_make_listing())
         self.assertFalse(result)
 
     def test_returns_false_when_not_in_db(self) -> None:
         not_in_db = ListingPriceState(exists=False, previous_price=None)
-        with patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=True), \
-             patch("ai_marketplace_monitor.pg_cache.fetch_listing_price_state", return_value=not_in_db):
+        with (
+            patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=True),
+            patch(
+                "ai_marketplace_monitor.pg_cache.fetch_listing_price_state", return_value=not_in_db
+            ),
+        ):
             from ai_marketplace_monitor.pg_cache import should_skip_stable_detail_fetch
+
             result = should_skip_stable_detail_fetch(_make_listing())
         self.assertFalse(result)
 
     def test_returns_false_when_price_changed(self) -> None:
         changed = ListingPriceState(exists=True, previous_price="4000")
-        with patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=True), \
-             patch("ai_marketplace_monitor.pg_cache.fetch_listing_price_state", return_value=changed):
+        with (
+            patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=True),
+            patch(
+                "ai_marketplace_monitor.pg_cache.fetch_listing_price_state", return_value=changed
+            ),
+        ):
             from ai_marketplace_monitor.pg_cache import should_skip_stable_detail_fetch
+
             result = should_skip_stable_detail_fetch(_make_listing(price="5000"))
         self.assertFalse(result)
 
     def test_returns_false_when_no_ai_evaluation(self) -> None:
         same_price = ListingPriceState(exists=True, previous_price="5000")
-        with patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=True), \
-             patch("ai_marketplace_monitor.pg_cache.fetch_listing_price_state", return_value=same_price), \
-             patch("ai_marketplace_monitor.pg_cache.has_any_ai_evaluation_for_listing", return_value=False):
+        with (
+            patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=True),
+            patch(
+                "ai_marketplace_monitor.pg_cache.fetch_listing_price_state", return_value=same_price
+            ),
+            patch(
+                "ai_marketplace_monitor.pg_cache.has_any_ai_evaluation_for_listing",
+                return_value=False,
+            ),
+        ):
             from ai_marketplace_monitor.pg_cache import should_skip_stable_detail_fetch
+
             result = should_skip_stable_detail_fetch(_make_listing())
         self.assertFalse(result)
 
     def test_returns_true_when_all_conditions_hold(self) -> None:
         same_price = ListingPriceState(exists=True, previous_price="5000")
-        with patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=True), \
-             patch("ai_marketplace_monitor.pg_cache.fetch_listing_price_state", return_value=same_price), \
-             patch("ai_marketplace_monitor.pg_cache.has_any_ai_evaluation_for_listing", return_value=True):
+        with (
+            patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=True),
+            patch(
+                "ai_marketplace_monitor.pg_cache.fetch_listing_price_state", return_value=same_price
+            ),
+            patch(
+                "ai_marketplace_monitor.pg_cache.has_any_ai_evaluation_for_listing",
+                return_value=True,
+            ),
+        ):
             from ai_marketplace_monitor.pg_cache import should_skip_stable_detail_fetch
+
             result = should_skip_stable_detail_fetch(_make_listing())
         self.assertTrue(result)
 
@@ -92,8 +121,10 @@ class ShouldSkipStableTests(unittest.TestCase):
 # FacebookMarketplace.search shallow-skip integration tests
 # ---------------------------------------------------------------------------
 
+
 def _make_fb_marketplace(page_stub: MagicMock | None = None) -> "FacebookMarketplace":
     from ai_marketplace_monitor.facebook import FacebookMarketplace
+
     fb = FacebookMarketplace.__new__(FacebookMarketplace)
     fb.logger = MagicMock()
     fb.keyboard_monitor = None
@@ -151,7 +182,7 @@ class FacebookSearchShallowSkipTests(unittest.TestCase):
     def _patch_common(self, found_listings: list):
         """Common patches needed to run search() without a real browser."""
         return [
-            patch("ai_marketplace_monitor.facebook.FacebookSearchResultPage") ,
+            patch("ai_marketplace_monitor.facebook.FacebookSearchResultPage"),
             patch.object(
                 __import__("ai_marketplace_monitor.facebook", fromlist=["counter"]).counter,
                 "increment",
@@ -169,12 +200,18 @@ class FacebookSearchShallowSkipTests(unittest.TestCase):
         detail_listing.description = "A great GPU"
         detail_listing.original_price = ""
 
-        with patch.dict("os.environ", {}, clear=False), \
-             patch("ai_marketplace_monitor.facebook.FacebookSearchResultPage") as mock_serp_cls, \
-             patch.object(fb, "goto_url"), \
-             patch.object(fb, "check_listing", return_value=True), \
-             patch.object(fb, "get_listing_details", return_value=(detail_listing, True)) as mock_detail, \
-             patch("ai_marketplace_monitor.facebook.should_skip_stable_detail_fetch", return_value=True):
+        with (
+            patch.dict("os.environ", {}, clear=False),
+            patch("ai_marketplace_monitor.facebook.FacebookSearchResultPage") as mock_serp_cls,
+            patch.object(fb, "goto_url"),
+            patch.object(fb, "check_listing", return_value=True),
+            patch.object(
+                fb, "get_listing_details", return_value=(detail_listing, True)
+            ) as mock_detail,
+            patch(
+                "ai_marketplace_monitor.facebook.should_skip_stable_detail_fetch", return_value=True
+            ),
+        ):
 
             # Even with helper returning True, flag off means we never check helper.
             os.environ.pop("AIMM_SHALLOW_STABLE_SKIP", None)
@@ -186,15 +223,20 @@ class FacebookSearchShallowSkipTests(unittest.TestCase):
     def test_flag_on_stable_listing_skips_get_listing_details(self) -> None:
         """When flag on + helper says stable, get_listing_details must NOT be called."""
         import os
+
         listing = _make_listing()
         fb = _make_fb_marketplace()
 
-        with patch.dict("os.environ", {"AIMM_SHALLOW_STABLE_SKIP": "1"}), \
-             patch("ai_marketplace_monitor.facebook.FacebookSearchResultPage") as mock_serp_cls, \
-             patch.object(fb, "goto_url"), \
-             patch.object(fb, "check_listing", return_value=True), \
-             patch.object(fb, "get_listing_details") as mock_detail, \
-             patch("ai_marketplace_monitor.facebook.should_skip_stable_detail_fetch", return_value=True):
+        with (
+            patch.dict("os.environ", {"AIMM_SHALLOW_STABLE_SKIP": "1"}),
+            patch("ai_marketplace_monitor.facebook.FacebookSearchResultPage") as mock_serp_cls,
+            patch.object(fb, "goto_url"),
+            patch.object(fb, "check_listing", return_value=True),
+            patch.object(fb, "get_listing_details") as mock_detail,
+            patch(
+                "ai_marketplace_monitor.facebook.should_skip_stable_detail_fetch", return_value=True
+            ),
+        ):
 
             mock_serp_cls.return_value.get_listings.return_value = [listing]
             results = list(fb.search(_make_item_config()))
@@ -205,6 +247,7 @@ class FacebookSearchShallowSkipTests(unittest.TestCase):
     def test_flag_on_new_listing_still_calls_get_listing_details(self) -> None:
         """When flag on but helper says NOT stable, get_listing_details must still be called."""
         import os
+
         listing = _make_listing()
         fb = _make_fb_marketplace()
 
@@ -214,12 +257,19 @@ class FacebookSearchShallowSkipTests(unittest.TestCase):
         detail_listing.description = "A great GPU"
         detail_listing.original_price = ""
 
-        with patch.dict("os.environ", {"AIMM_SHALLOW_STABLE_SKIP": "1"}), \
-             patch("ai_marketplace_monitor.facebook.FacebookSearchResultPage") as mock_serp_cls, \
-             patch.object(fb, "goto_url"), \
-             patch.object(fb, "check_listing", return_value=True), \
-             patch.object(fb, "get_listing_details", return_value=(detail_listing, True)) as mock_detail, \
-             patch("ai_marketplace_monitor.facebook.should_skip_stable_detail_fetch", return_value=False):
+        with (
+            patch.dict("os.environ", {"AIMM_SHALLOW_STABLE_SKIP": "1"}),
+            patch("ai_marketplace_monitor.facebook.FacebookSearchResultPage") as mock_serp_cls,
+            patch.object(fb, "goto_url"),
+            patch.object(fb, "check_listing", return_value=True),
+            patch.object(
+                fb, "get_listing_details", return_value=(detail_listing, True)
+            ) as mock_detail,
+            patch(
+                "ai_marketplace_monitor.facebook.should_skip_stable_detail_fetch",
+                return_value=False,
+            ),
+        ):
 
             mock_serp_cls.return_value.get_listings.return_value = [listing]
             results = list(fb.search(_make_item_config()))
@@ -229,13 +279,14 @@ class FacebookSearchShallowSkipTests(unittest.TestCase):
     def test_flag_on_mixed_batch_only_skips_stable(self) -> None:
         """Two listings: one stable, one new. Only the new one triggers get_listing_details."""
         import os
+
         stable = _make_listing(url="https://www.facebook.com/marketplace/item/111/")
-        new_one = _make_listing(
-            price="4500", url="https://www.facebook.com/marketplace/item/222/"
-        )
+        new_one = _make_listing(price="4500", url="https://www.facebook.com/marketplace/item/222/")
         fb = _make_fb_marketplace()
 
-        detail_listing = _make_listing(price="4500", url="https://www.facebook.com/marketplace/item/222/")
+        detail_listing = _make_listing(
+            price="4500", url="https://www.facebook.com/marketplace/item/222/"
+        )
         detail_listing.condition = "used"
         detail_listing.seller = "Seller2"
         detail_listing.description = "Another GPU"
@@ -244,12 +295,19 @@ class FacebookSearchShallowSkipTests(unittest.TestCase):
         def _should_skip(listing, logger=None):
             return listing.post_url.split("?")[0].endswith("111/")
 
-        with patch.dict("os.environ", {"AIMM_SHALLOW_STABLE_SKIP": "1"}), \
-             patch("ai_marketplace_monitor.facebook.FacebookSearchResultPage") as mock_serp_cls, \
-             patch.object(fb, "goto_url"), \
-             patch.object(fb, "check_listing", return_value=True), \
-             patch.object(fb, "get_listing_details", return_value=(detail_listing, True)) as mock_detail, \
-             patch("ai_marketplace_monitor.facebook.should_skip_stable_detail_fetch", side_effect=_should_skip):
+        with (
+            patch.dict("os.environ", {"AIMM_SHALLOW_STABLE_SKIP": "1"}),
+            patch("ai_marketplace_monitor.facebook.FacebookSearchResultPage") as mock_serp_cls,
+            patch.object(fb, "goto_url"),
+            patch.object(fb, "check_listing", return_value=True),
+            patch.object(
+                fb, "get_listing_details", return_value=(detail_listing, True)
+            ) as mock_detail,
+            patch(
+                "ai_marketplace_monitor.facebook.should_skip_stable_detail_fetch",
+                side_effect=_should_skip,
+            ),
+        ):
 
             mock_serp_cls.return_value.get_listings.return_value = [stable, new_one]
             results = list(fb.search(_make_item_config()))

@@ -1,11 +1,23 @@
 .venv/
 .env
+.env.*
+!.env.example
 .agent/
 __pycache__/
 *.pyc
+.coverage
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+coverage.xml
+htmlcov/
+.DS_Store
+.idea/
+.vscode/
 
 # Local marketplace search / secrets (optional; merged after ~/.ai-marketplace-monitor/config.toml)
 ai_marketplace_monitor/personal_config/
+dev_documents/
 
 # Dashboard backend venv
 backend/.venv/
@@ -13,3 +25,9 @@ backend/.venv/
 # Dashboard frontend build output and deps
 frontend/dist/
 frontend/node_modules/
+
+# Local browser / DB artifacts
+playwright/.auth/
+*.db
+*.sqlite
+*.sqlite3

@@ -39,9 +39,7 @@ class EmailNotificationConfig(NotificationConfig):
         if not isinstance(self.email, list) or not all(
             (isinstance(x, str) and "@" in x and "." in x.split("@")[1]) for x in self.email
         ):
-            raise ValueError(
-                f"Item {hilight(self.name)} email must be a string or list of string."
-            )
+            raise ValueError(f"Item {hilight(self.name)} email must be a string or list of string.")
 
     def handle_smtp_server(self: "EmailNotificationConfig") -> None:
         if self.smtp_server is None:
@@ -96,9 +94,7 @@ class EmailNotificationConfig(NotificationConfig):
         n_new = len([x for x in notification_status if x == NotificationStatus.NOT_NOTIFIED])
         n_notified = len([x for x in notification_status if x == NotificationStatus.NOTIFIED])
         n_expired = len([x for x in notification_status if x == NotificationStatus.EXPIRED])
-        n_updated = len(
-            [x for x in notification_status if x == NotificationStatus.LISTING_CHANGED]
-        )
+        n_updated = len([x for x in notification_status if x == NotificationStatus.LISTING_CHANGED])
         n_discounted = len(
             [x for x in notification_status if x == NotificationStatus.LISTING_DISCOUNTED]
         )

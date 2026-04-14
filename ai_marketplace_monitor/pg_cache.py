@@ -154,8 +154,7 @@ def ensure_database() -> bool:
 
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS listings (
                     id BIGSERIAL PRIMARY KEY,
                     listing_key TEXT UNIQUE NOT NULL,
@@ -173,50 +172,64 @@ def ensure_database() -> bool:
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
-                """
-            )
-            cur.execute(
-                """
+                """)
+            cur.execute("""
                 ALTER TABLE listings
                 ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
-                """
-            )
-            cur.execute(
-                """
+                """)
+            cur.execute("""
                 ALTER TABLE listings
                 ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT '';
-                """
-            )
-            cur.execute(
-                """
+                """)
+            cur.execute("""
                 ALTER TABLE listings
                 ADD COLUMN IF NOT EXISTS skick TEXT NOT NULL DEFAULT '';
-                """
-            )
-            cur.execute(
-                """
+                """)
+            cur.execute("""
                 ALTER TABLE listings
                 ADD COLUMN IF NOT EXISTS original_price TEXT NOT NULL DEFAULT '';
-                """
-            )
-            cur.execute(
-                """
+                """)
+            cur.execute("""
+                ALTER TABLE listings
+                ADD COLUMN IF NOT EXISTS availability TEXT NOT NULL DEFAULT 'Till Salu';
+                """)
+            cur.execute("""
+                ALTER TABLE listings
+                ADD COLUMN IF NOT EXISTS is_tradera BOOLEAN NOT NULL DEFAULT FALSE;
+                """)
+            cur.execute("""
+                ALTER TABLE listings
+                ADD COLUMN IF NOT EXISTS user_note TEXT NOT NULL DEFAULT '';
+                """)
+            cur.execute("""
+                ALTER TABLE listings
+                ADD COLUMN IF NOT EXISTS user_feedback TEXT;
+                """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS listing_availability_history (
+                    id BIGSERIAL PRIMARY KEY,
+                    listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+                    availability TEXT NOT NULL,
+                    observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_listing_availability_history_time
+                ON listing_availability_history (listing_id, observed_at DESC);
+                """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS listing_price_history (
                     id BIGSERIAL PRIMARY KEY,
                     listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
                     price TEXT NOT NULL,
                     observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
-                """
-            )
-            cur.execute(
-                """
+                """)
+            cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_listing_price_history_listing_time
                 ON listing_price_history (listing_id, observed_at DESC);
-                """
-            )
-            cur.execute(
-                """
+                """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS ai_evaluations (
                     id BIGSERIAL PRIMARY KEY,
                     listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
@@ -233,30 +246,22 @@ def ensure_database() -> bool:
                     evaluated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
-                """
-            )
-            cur.execute(
-                """
+                """)
+            cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_ai_evaluations_lookup
                 ON ai_evaluations (
                     listing_id, model, item_config_hash, marketplace_config_hash, prompt_version, prompt_hash, evaluated_at DESC
                 );
-                """
-            )
-            cur.execute(
-                """
+                """)
+            cur.execute("""
                 ALTER TABLE ai_evaluations
                 ADD COLUMN IF NOT EXISTS response_model TEXT;
-                """
-            )
-            cur.execute(
-                """
+                """)
+            cur.execute("""
                 ALTER TABLE ai_evaluations
                 ADD COLUMN IF NOT EXISTS listing_kind TEXT NOT NULL DEFAULT 'unknown';
-                """
-            )
-            cur.execute(
-                """
+                """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS notification_events (
                     id BIGSERIAL PRIMARY KEY,
                     listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
@@ -266,14 +271,11 @@ def ensure_database() -> bool:
                     details JSONB,
                     sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
-                """
-            )
-            cur.execute(
-                """
+                """)
+            cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_notification_events_listing_time
                 ON notification_events (listing_id, sent_at DESC);
-                """
-            )
+                """)
         conn.commit()
     return True
 
@@ -281,6 +283,7 @@ def ensure_database() -> bool:
 @dataclass
 class ListingPriceState:
     """Result of fetch_listing_price_state."""
+
     exists: bool
     previous_price: str | None  # None when listing not yet in DB
 
@@ -361,29 +364,60 @@ def _upsert_listing(cur: Any, listing: Listing) -> int:
     """Upsert listing row and insert price history only when price is new or changed."""
     listing_id = extract_marketplace_listing_id(listing.post_url, listing.id)
     key = f"{listing.marketplace}:{listing_id}"
+    removed_availability = "Borttagen"
 
-    # Read the stored price before upserting so we can decide whether to add a history row.
-    cur.execute("SELECT id, current_price FROM listings WHERE listing_key = %s LIMIT 1;", (key,))
+    # Read the stored price and availability before upserting so we can decide whether to add a history row.
+    cur.execute(
+        "SELECT id, current_price, availability FROM listings WHERE listing_key = %s LIMIT 1;",
+        (key,),
+    )
     existing = cur.fetchone()
     previous_price: str | None = str(existing[1]) if existing is not None else None
+    previous_availability: str | None = str(existing[2]) if existing is not None else None
 
     cur.execute(
         """
         INSERT INTO listings (
             listing_key, marketplace, marketplace_listing_id, canonical_post_url,
             title, current_price, original_price, last_content_hash,
-            description, location, skick
+            description, location, skick, availability, is_tradera
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (listing_key)
         DO UPDATE SET
-            title = EXCLUDED.title,
-            current_price = EXCLUDED.current_price,
-            original_price = EXCLUDED.original_price,
-            last_content_hash = EXCLUDED.last_content_hash,
-            description = EXCLUDED.description,
-            location = EXCLUDED.location,
-            skick = EXCLUDED.skick,
+            title = CASE
+                WHEN EXCLUDED.availability = %s THEN listings.title
+                ELSE EXCLUDED.title
+            END,
+            current_price = CASE
+                WHEN EXCLUDED.availability = %s THEN listings.current_price
+                ELSE EXCLUDED.current_price
+            END,
+            original_price = CASE
+                WHEN EXCLUDED.availability = %s THEN listings.original_price
+                ELSE EXCLUDED.original_price
+            END,
+            last_content_hash = CASE
+                WHEN EXCLUDED.availability = %s THEN listings.last_content_hash
+                ELSE EXCLUDED.last_content_hash
+            END,
+            description = CASE
+                WHEN EXCLUDED.availability = %s THEN listings.description
+                ELSE EXCLUDED.description
+            END,
+            location = CASE
+                WHEN EXCLUDED.availability = %s THEN listings.location
+                ELSE EXCLUDED.location
+            END,
+            skick = CASE
+                WHEN EXCLUDED.availability = %s THEN listings.skick
+                ELSE EXCLUDED.skick
+            END,
+            availability = EXCLUDED.availability,
+            is_tradera = CASE
+                WHEN EXCLUDED.availability = %s THEN listings.is_tradera
+                ELSE EXCLUDED.is_tradera
+            END,
             last_seen_at = NOW(),
             updated_at = NOW()
         RETURNING id;
@@ -400,6 +434,16 @@ def _upsert_listing(cur: Any, listing: Listing) -> int:
             listing.description or "",
             listing.location or "",
             listing.condition or "",
+            getattr(listing, "availability", "Till Salu"),
+            getattr(listing, "is_tradera", False),
+            removed_availability,
+            removed_availability,
+            removed_availability,
+            removed_availability,
+            removed_availability,
+            removed_availability,
+            removed_availability,
+            removed_availability,
         ),
     )
     internal_id = int(cur.fetchone()[0])
@@ -412,6 +456,17 @@ def _upsert_listing(cur: Any, listing: Listing) -> int:
             VALUES (%s, %s, NOW());
             """,
             (internal_id, listing.price),
+        )
+
+    if previous_availability is None or previous_availability != getattr(
+        listing, "availability", "Till Salu"
+    ):
+        cur.execute(
+            """
+            INSERT INTO listing_availability_history (listing_id, availability, observed_at)
+            VALUES (%s, %s, NOW());
+            """,
+            (internal_id, getattr(listing, "availability", "Till Salu")),
         )
     return internal_id
 
@@ -478,7 +533,16 @@ def get_cached_ai_response(
                 logger.info("[AIMM-DB] ai_cache_miss reason=no_previous_eval")
             return None
 
-        score, conclusion, comment, prev_price, prev_hash, evaluated_at, resp_model, listing_kind = row
+        (
+            score,
+            conclusion,
+            comment,
+            prev_price,
+            prev_hash,
+            evaluated_at,
+            resp_model,
+            listing_kind,
+        ) = row
         can_reuse, reason = should_reuse_evaluation(
             previous_price=str(prev_price or ""),
             previous_content_hash=str(prev_hash or ""),
@@ -560,9 +624,7 @@ def store_ai_evaluation(
                 )
             conn.commit()
         if logger:
-            logger.info(
-                f"[AIMM-DB] ai_eval_persisted ({listing_kind or 'unknown'})"
-            )
+            logger.info(f"[AIMM-DB] ai_eval_persisted ({listing_kind or 'unknown'})")
     except Exception as exc:  # pragma: no cover
         if logger:
             logger.warning(f"[AIMM-DB] store_ai_evaluation failed: {exc}")
@@ -721,8 +783,56 @@ def prune_old_records(retention_days: int, logger: Any = None) -> dict[str, int]
                 deleted["notification_events"] = int(cur.rowcount or 0)
             conn.commit()
         if logger:
-            logger.info(f"[AIMM-DB] prune_complete retention_days={retention_days} deleted={deleted}")
+            logger.info(
+                f"[AIMM-DB] prune_complete retention_days={retention_days} deleted={deleted}"
+            )
     except Exception as exc:  # pragma: no cover
         if logger:
             logger.debug(f"[AIMM-DB] prune_old_records failed: {exc}")
     return deleted
+
+
+def get_active_listings_for_revalidation(limit: int = 50, logger: Any = None) -> list[Listing]:
+    """Retrieve listings marked 'Till Salu', ordered by oldest last_seen_at."""
+    if not cache_enabled():
+        return []
+    try:
+        ensure_database()
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT marketplace_listing_id, marketplace, canonical_post_url, title,
+                           current_price, original_price, description, location, skick, availability
+                    FROM listings
+                    WHERE availability = 'Till Salu'
+                    ORDER BY last_seen_at ASC
+                    LIMIT %s;
+                    """,
+                    (limit,),
+                )
+                rows = cur.fetchall()
+
+        listings = []
+        for row in rows:
+            listings.append(
+                Listing(
+                    id=row[0],
+                    marketplace=row[1],
+                    name="",
+                    post_url=row[2],
+                    title=row[3],
+                    price=row[4],
+                    original_price=row[5],
+                    description=row[6],
+                    location=row[7],
+                    condition=row[8],
+                    seller="",
+                    availability=row[9],
+                )
+            )
+        return listings
+    except Exception as exc:
+        if logger:
+            logger.debug(f"[AIMM-DB] get_active_listings_for_revalidation failed: {exc}")
+        return []

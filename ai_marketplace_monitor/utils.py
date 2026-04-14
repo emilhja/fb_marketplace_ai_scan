@@ -426,9 +426,7 @@ expr = infix_notation(
 )
 
 
-def _operand_matches_text(
-    operand: str, haystack: str, *, digit_token_boundary: bool
-) -> bool:
+def _operand_matches_text(operand: str, haystack: str, *, digit_token_boundary: bool) -> bool:
     """Leaf match for keyword expressions: substring, or digit-only token with (?<!\\d)…(?!\\d)."""
     n_op = normalize_string(operand)
     n_hay = normalize_string(haystack)
@@ -621,9 +619,7 @@ def _normalize_monetary_amount_single(fragment: str) -> str | None:
 
 # First amount using spaced thousands (e.g. Swedish "10 000"), before a second price
 # such as a strikethrough "17 999" in the same scraped string.
-_SWEDISH_STYLE_SPACED_AMOUNT = re.compile(
-    r"\d{1,3}(?:\s+\d{3})+(?:\s*[.,]\d{1,2})?"
-)
+_SWEDISH_STYLE_SPACED_AMOUNT = re.compile(r"\d{1,3}(?:\s+\d{3})+(?:\s*[.,]\d{1,2})?")
 
 
 def parse_listing_prices(price: str) -> tuple[str, str]:

@@ -3,6 +3,7 @@
 Run ``alembic stamp head`` once after first setup to record this baseline
 in the alembic_version table without executing any DDL statements.
 """
+
 from alembic import op
 
 revision = "0001_baseline"

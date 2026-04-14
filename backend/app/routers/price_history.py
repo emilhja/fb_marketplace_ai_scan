@@ -1,4 +1,5 @@
 """GET /api/listing-price-history."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -25,36 +26,46 @@ def list_price_history(
     observed_to: datetime | None = Query(None),
     sort_dir: Literal["asc", "desc"] = Query("desc"),
 ):
-    q = (
-        select(
-            ListingPriceHistory.id,
-            ListingPriceHistory.listing_id,
-            Listing.title.label("listing_title"),
-            Listing.canonical_post_url,
-            ListingPriceHistory.price,
-            ListingPriceHistory.observed_at,
+    previous_price = (
+        func.lag(ListingPriceHistory.price)
+        .over(
+            partition_by=ListingPriceHistory.listing_id,
+            order_by=ListingPriceHistory.observed_at.asc(),
         )
-        .join(Listing, Listing.id == ListingPriceHistory.listing_id)
+        .label("previous_price")
     )
 
+    base_q = select(
+        ListingPriceHistory.id,
+        ListingPriceHistory.listing_id,
+        Listing.title.label("listing_title"),
+        Listing.canonical_post_url,
+        ListingPriceHistory.price,
+        previous_price,
+        ListingPriceHistory.observed_at,
+    ).join(Listing, Listing.id == ListingPriceHistory.listing_id)
+
+    history_sq = base_q.subquery("history_sq")
+    q = select(history_sq)
+
     if listing_id is not None:
-        q = q.where(ListingPriceHistory.listing_id == listing_id)
+        q = q.where(history_sq.c.listing_id == listing_id)
     if observed_from:
-        q = q.where(ListingPriceHistory.observed_at >= observed_from)
+        q = q.where(history_sq.c.observed_at >= observed_from)
     if observed_to:
-        q = q.where(ListingPriceHistory.observed_at <= observed_to)
+        q = q.where(history_sq.c.observed_at <= observed_to)
 
     count_sq = q.subquery("count_sq")
     total: int = db.execute(select(func.count()).select_from(count_sq)).scalar_one()
 
-    order = (
-        ListingPriceHistory.observed_at.asc()
-        if sort_dir == "asc"
-        else ListingPriceHistory.observed_at.desc()
-    )
-    rows = db.execute(
-        q.order_by(order).offset((page - 1) * page_size).limit(page_size)
-    ).all()
+    order = history_sq.c.observed_at.asc() if sort_dir == "asc" else history_sq.c.observed_at.desc()
+    rows = db.execute(q.order_by(order).offset((page - 1) * page_size).limit(page_size)).all()
+
+    def parse_price(value: str | None) -> int | None:
+        if not value:
+            return None
+        digits = "".join(ch for ch in value if ch.isdigit() or ch == "-")
+        return int(digits) if digits and digits != "-" else None
 
     items = [
         PriceHistoryRow(
@@ -63,6 +74,12 @@ def list_price_history(
             listing_title=r.listing_title,
             canonical_post_url=r.canonical_post_url,
             price=r.price,
+            previous_price=r.previous_price,
+            changed_by=(
+                parse_price(r.price) - parse_price(r.previous_price)
+                if parse_price(r.price) is not None and parse_price(r.previous_price) is not None
+                else None
+            ),
             observed_at=r.observed_at,
         )
         for r in rows

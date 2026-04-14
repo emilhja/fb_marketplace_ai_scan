@@ -4,6 +4,7 @@
 Uses credentials and DB name from AIMM_DATABASE_URL. Publishes on host port 55432
 by default to avoid clashing with a system Postgres on 5432.
 """
+
 from __future__ import annotations
 
 import argparse

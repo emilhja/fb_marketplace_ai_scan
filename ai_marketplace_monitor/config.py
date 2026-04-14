@@ -1,3 +1,5 @@
+"""Configuration loading and validation for the local monitor fork."""
+
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
@@ -40,6 +42,8 @@ class ConfigItem(Enum):
 
 @dataclass
 class Config(Generic[TAIConfig, TItemConfig, TMarketplaceConfig]):
+    """Merged runtime configuration assembled from built-in and user TOML files."""
+
     monitor: MonitorConfig = field(init=False)
     ai: Dict[str, TAIConfig] = field(init=False)
     user: Dict[str, UserConfig] = field(init=False)
@@ -83,6 +87,7 @@ class Config(Generic[TAIConfig, TItemConfig, TMarketplaceConfig]):
         self.validate_items()
 
     def get_translator_config(self: "Config", config: Dict[str, Any]) -> None:
+        """Load translation dictionaries used by Marketplace parsers and prompts."""
         if not isinstance(config.get("translation", {}), dict):
             raise ValueError("translation section must be a dictionary.")
 
@@ -96,9 +101,11 @@ class Config(Generic[TAIConfig, TItemConfig, TMarketplaceConfig]):
             )
 
     def get_monitor_config(self: "Config", config: Dict[str, Any]) -> None:
+        """Load monitor-wide options."""
         self.monitor = MonitorConfig(name="monitor", **config.get("monitor", {}))
 
     def get_ai_config(self: "Config", config: Dict[str, Any]) -> None:
+        """Instantiate configured AI backends from merged TOML sections."""
         # convert ai config to AIConfig objects
         if not isinstance(config.get("ai", {}), dict):
             raise ValueError("ai section must be a dictionary.")
@@ -116,6 +123,7 @@ class Config(Generic[TAIConfig, TItemConfig, TMarketplaceConfig]):
             self.ai[key] = backend_class.get_config(name=key, **value)
 
     def get_notification_config(self: "Config", config: Dict[str, Any]) -> None:
+        """Instantiate notification backends and validate their declared type."""
         if not isinstance(config.get("notification", {}), dict):
             raise ValueError("notification section must be a dictionary.")
 
@@ -192,6 +200,7 @@ class Config(Generic[TAIConfig, TItemConfig, TMarketplaceConfig]):
                     break
 
     def validate_sections(self: "Config", config: Dict[str, Any]) -> None:
+        """Ensure the merged config contains the required top-level sections only."""
         # check for required sections
         for required_section in ["marketplace", "user", "item"]:
             if required_section not in config:

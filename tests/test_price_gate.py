@@ -7,6 +7,7 @@ Covers:
 - send_plain_alert dispatches to configured channels only.
 - monitor.py search_item skips AI and logs for no-price-change, and sends alert for price change.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -18,12 +19,14 @@ from unittest.mock import MagicMock, call, patch
 from ai_marketplace_monitor.listing import Listing
 from ai_marketplace_monitor.pg_cache import ListingPriceState
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_listing(price: str = "5000", url: str = "https://www.facebook.com/marketplace/item/999/") -> Listing:
+
+def _make_listing(
+    price: str = "5000", url: str = "https://www.facebook.com/marketplace/item/999/"
+) -> Listing:
     return Listing(
         marketplace="facebook",
         name="gpu",
@@ -43,11 +46,13 @@ def _make_listing(price: str = "5000", url: str = "https://www.facebook.com/mark
 # fetch_listing_price_state
 # ---------------------------------------------------------------------------
 
+
 class FetchListingPriceStateTests(unittest.TestCase):
     def test_returns_not_exists_when_cache_disabled(self) -> None:
         """When cache_enabled() is False the helper must return immediately without connecting."""
         with patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=False):
             from ai_marketplace_monitor.pg_cache import fetch_listing_price_state
+
             state = fetch_listing_price_state(_make_listing())
         self.assertFalse(state.exists)
         self.assertIsNone(state.previous_price)
@@ -62,10 +67,13 @@ class FetchListingPriceStateTests(unittest.TestCase):
         mock_conn.__exit__ = MagicMock(return_value=False)
         mock_conn.cursor.return_value = mock_cur
 
-        with patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=True), \
-             patch("ai_marketplace_monitor.pg_cache.ensure_database"), \
-             patch("ai_marketplace_monitor.pg_cache._connect", return_value=mock_conn):
+        with (
+            patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=True),
+            patch("ai_marketplace_monitor.pg_cache.ensure_database"),
+            patch("ai_marketplace_monitor.pg_cache._connect", return_value=mock_conn),
+        ):
             from ai_marketplace_monitor.pg_cache import fetch_listing_price_state
+
             state = fetch_listing_price_state(_make_listing())
 
         self.assertFalse(state.exists)
@@ -81,10 +89,13 @@ class FetchListingPriceStateTests(unittest.TestCase):
         mock_conn.__exit__ = MagicMock(return_value=False)
         mock_conn.cursor.return_value = mock_cur
 
-        with patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=True), \
-             patch("ai_marketplace_monitor.pg_cache.ensure_database"), \
-             patch("ai_marketplace_monitor.pg_cache._connect", return_value=mock_conn):
+        with (
+            patch("ai_marketplace_monitor.pg_cache.cache_enabled", return_value=True),
+            patch("ai_marketplace_monitor.pg_cache.ensure_database"),
+            patch("ai_marketplace_monitor.pg_cache._connect", return_value=mock_conn),
+        ):
             from ai_marketplace_monitor.pg_cache import fetch_listing_price_state
+
             state = fetch_listing_price_state(_make_listing(price="5000"))
 
         self.assertTrue(state.exists)
@@ -94,6 +105,7 @@ class FetchListingPriceStateTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # send_plain_alert
 # ---------------------------------------------------------------------------
+
 
 class SendPlainAlertTests(unittest.TestCase):
     def test_dispatches_to_configured_subclass(self) -> None:
@@ -127,7 +139,11 @@ class SendPlainAlertTests(unittest.TestCase):
         self.assertTrue(result)
 
         # Cleanup — remove the dynamically registered subclass so other tests are not affected.
-        NotificationConfig.__subclasses__().remove(_StubBackend) if _StubBackend in NotificationConfig.__subclasses__() else None
+        (
+            NotificationConfig.__subclasses__().remove(_StubBackend)
+            if _StubBackend in NotificationConfig.__subclasses__()
+            else None
+        )
 
     def test_returns_false_when_no_channels_configured(self) -> None:
         """send_plain_alert returns False when no subclass has required fields set."""
@@ -146,12 +162,14 @@ class SendPlainAlertTests(unittest.TestCase):
 # monitor.py price gate integration
 # ---------------------------------------------------------------------------
 
+
 class PriceGateIntegrationTests(unittest.TestCase):
     """Verify search_item skips / alerts based on ListingPriceState."""
 
     def _make_monitor(self):
         """Return a MarketplaceMonitor with just enough state to call search_item."""
         from ai_marketplace_monitor.monitor import MarketplaceMonitor
+
         monitor = MarketplaceMonitor.__new__(MarketplaceMonitor)
         monitor.logger = MagicMock(spec=Logger)
         monitor.keyboard_monitor = None
@@ -183,13 +201,18 @@ class PriceGateIntegrationTests(unittest.TestCase):
 
         unchanged_state = ListingPriceState(exists=True, previous_price="5000")
 
-        with patch("ai_marketplace_monitor.monitor.fetch_listing_price_state", return_value=unchanged_state), \
-             patch("ai_marketplace_monitor.monitor.observe_listing"), \
-             patch(
-                 "ai_marketplace_monitor.monitor.has_any_ai_evaluation_for_listing",
-                 return_value=True,
-             ), \
-             patch.object(monitor, "evaluate_by_ai") as mock_eval:
+        with (
+            patch(
+                "ai_marketplace_monitor.monitor.fetch_listing_price_state",
+                return_value=unchanged_state,
+            ),
+            patch("ai_marketplace_monitor.monitor.observe_listing"),
+            patch(
+                "ai_marketplace_monitor.monitor.has_any_ai_evaluation_for_listing",
+                return_value=True,
+            ),
+            patch.object(monitor, "evaluate_by_ai") as mock_eval,
+        ):
             monitor.search_item(marketplace_config, marketplace, item_config)
 
         mock_eval.assert_not_called()
@@ -219,16 +242,23 @@ class PriceGateIntegrationTests(unittest.TestCase):
         unchanged_state = ListingPriceState(exists=True, previous_price="5000")
         ai_response = AIResponse(score=4, comment="Good match", name="openrouter")
 
-        with patch("ai_marketplace_monitor.monitor.fetch_listing_price_state", return_value=unchanged_state), \
-             patch("ai_marketplace_monitor.monitor.observe_listing"), \
-             patch(
-                 "ai_marketplace_monitor.monitor.has_any_ai_evaluation_for_listing",
-                 return_value=False,
-             ), \
-             patch("ai_marketplace_monitor.monitor.User") as mock_user_cls, \
-             patch.object(monitor, "evaluate_by_ai", return_value=ai_response) as mock_eval:
+        with (
+            patch(
+                "ai_marketplace_monitor.monitor.fetch_listing_price_state",
+                return_value=unchanged_state,
+            ),
+            patch("ai_marketplace_monitor.monitor.observe_listing"),
+            patch(
+                "ai_marketplace_monitor.monitor.has_any_ai_evaluation_for_listing",
+                return_value=False,
+            ),
+            patch("ai_marketplace_monitor.monitor.User") as mock_user_cls,
+            patch.object(monitor, "evaluate_by_ai", return_value=ai_response) as mock_eval,
+        ):
 
-            mock_user_cls.return_value.notification_status.return_value = NotificationStatus.NOT_NOTIFIED
+            mock_user_cls.return_value.notification_status.return_value = (
+                NotificationStatus.NOT_NOTIFIED
+            )
 
             monitor.search_item(marketplace_config, marketplace, item_config)
 
@@ -258,16 +288,26 @@ class PriceGateIntegrationTests(unittest.TestCase):
         changed_state = ListingPriceState(exists=True, previous_price="5000")
         ai_response = AIResponse(score=4, comment="Good match", name="openrouter")
 
-        with patch("ai_marketplace_monitor.monitor.fetch_listing_price_state", return_value=changed_state), \
-             patch("ai_marketplace_monitor.monitor.observe_listing"), \
-             patch("ai_marketplace_monitor.monitor.send_plain_alert", return_value=True) as mock_alert, \
-             patch("ai_marketplace_monitor.monitor.record_notification_event"), \
-             patch("ai_marketplace_monitor.monitor.User") as mock_user_cls, \
-             patch.object(monitor, "evaluate_by_ai", return_value=ai_response) as mock_eval:
+        with (
+            patch(
+                "ai_marketplace_monitor.monitor.fetch_listing_price_state",
+                return_value=changed_state,
+            ),
+            patch("ai_marketplace_monitor.monitor.observe_listing"),
+            patch(
+                "ai_marketplace_monitor.monitor.send_plain_alert", return_value=True
+            ) as mock_alert,
+            patch("ai_marketplace_monitor.monitor.record_notification_event"),
+            patch("ai_marketplace_monitor.monitor.User") as mock_user_cls,
+            patch.object(monitor, "evaluate_by_ai", return_value=ai_response) as mock_eval,
+        ):
 
             # Notification status: not notified (so the notified-skip doesn't hide our call).
             from ai_marketplace_monitor.notification import NotificationStatus
-            mock_user_cls.return_value.notification_status.return_value = NotificationStatus.NOT_NOTIFIED
+
+            mock_user_cls.return_value.notification_status.return_value = (
+                NotificationStatus.NOT_NOTIFIED
+            )
 
             monitor.search_item(marketplace_config, marketplace, item_config)
 
@@ -299,13 +339,19 @@ class PriceGateIntegrationTests(unittest.TestCase):
         new_state = ListingPriceState(exists=False, previous_price=None)
         ai_response = AIResponse(score=4, comment="Good match", name="openrouter")
 
-        with patch("ai_marketplace_monitor.monitor.fetch_listing_price_state", return_value=new_state), \
-             patch("ai_marketplace_monitor.monitor.observe_listing"), \
-             patch("ai_marketplace_monitor.monitor.send_plain_alert") as mock_alert, \
-             patch("ai_marketplace_monitor.monitor.User") as mock_user_cls, \
-             patch.object(monitor, "evaluate_by_ai", return_value=ai_response) as mock_eval:
+        with (
+            patch(
+                "ai_marketplace_monitor.monitor.fetch_listing_price_state", return_value=new_state
+            ),
+            patch("ai_marketplace_monitor.monitor.observe_listing"),
+            patch("ai_marketplace_monitor.monitor.send_plain_alert") as mock_alert,
+            patch("ai_marketplace_monitor.monitor.User") as mock_user_cls,
+            patch.object(monitor, "evaluate_by_ai", return_value=ai_response) as mock_eval,
+        ):
 
-            mock_user_cls.return_value.notification_status.return_value = NotificationStatus.NOT_NOTIFIED
+            mock_user_cls.return_value.notification_status.return_value = (
+                NotificationStatus.NOT_NOTIFIED
+            )
 
             monitor.search_item(marketplace_config, marketplace, item_config)
 

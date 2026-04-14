@@ -127,9 +127,7 @@ class TelegramNotificationConfig(PushNotificationConfig):
         self: "TelegramNotificationConfig", text: str, max_length: int
     ) -> List[str]:
         """Split message at word boundaries while respecting character limit."""
-        return textwrap.wrap(
-            text, width=max_length, break_long_words=False, break_on_hyphens=False
-        )
+        return textwrap.wrap(text, width=max_length, break_long_words=False, break_on_hyphens=False)
 
     def _is_group_chat(self: "TelegramNotificationConfig") -> bool:
         """Determine if the chat_id represents a group chat (negative ID or supergroup)."""

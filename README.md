@@ -1,139 +1,135 @@
-# Facebook Marketplace scan
+# Facebook Marketplace Scan
 
-Hard fork of [ai-marketplace-monitor](https://pypi.org/project/ai-marketplace-monitor/) with local enhancements. `./run.sh` loads `.env`, activates `.venv`, initializes PostgreSQL cache tables, and runs the vendored local package via `python -m ai_marketplace_monitor.cli`. Configure searches in `~/.ai-marketplace-monitor/config.toml` (upstream config format is preserved).
+`facebook_marketplace_scan` is a personal fork of `ai-marketplace-monitor` with a PostgreSQL-backed cache, a small FastAPI + React dashboard, and extra workflow support for rerunning or reviewing listings locally.
 
-## PostgreSQL dedupe and price-aware reprocessing
+The repository is now structured to be shareable on GitHub:
 
-The wrapper can persist listing sightings, AI evaluations, and notification events in PostgreSQL to avoid repeated AI calls for unchanged listings.
+- public docs stay in the repo
+- private notes belong in `dev_documents/` and are ignored
+- local secrets belong in `.env`, never in tracked files
+- CI validates Python style/tests and the frontend build
 
-### Setup
+## What It Does
 
-1. Install deps:
-  ```bash
-   pip install -r requirements.txt
-  ```
-2. Copy `.env.example` to `.env` and set at least:
-  ```bash
-   AIMM_DATABASE_URL=postgresql://user:pass@localhost:5432/marketplace_scan
-   AIMM_PG_CACHE_ENABLED=1
-   AIMM_REEVAL_ON_PRICE_CHANGE=1
-   AIMM_REEVAL_ON_CONTENT_CHANGE=1
-   AIMM_AI_REEVAL_COOLDOWN_MINUTES=0
-   AIMM_PROMPT_VERSION=v1
-  ```
-3. Start normally with `./run.sh`.
+- Scans Facebook Marketplace searches using the vendored `ai_marketplace_monitor` package.
+- Caches listing observations and AI evaluations in PostgreSQL to reduce duplicate work.
+- Exposes a read-only dashboard API plus a React UI for listings, price history, and notifications.
+- Supports notification workflows and rerun queue processing for listings that need another pass.
 
-`run.sh` exports the repo root to `PYTHONPATH`, initializes DB tables via `scripts/init_postgres_cache.py`, and then starts the local fork entrypoint.
+## Repository Layout
 
-### Behavior
+- `ai_marketplace_monitor/`: vendored scanner logic and Marketplace-specific parsing.
+- `backend/`: FastAPI API, SQLAlchemy models, and rerun queue support.
+- `frontend/`: React + Vite dashboard UI.
+- `scripts/`: operational helper scripts.
+- `tests/`: hermetic unit tests.
+- `docs/`: public reference notes.
+- `dev_documents/`: local-only notes. Ignored by git.
 
-- If listing price/content and prompt version/hash are unchanged, PostgreSQL cache is reused and AI is skipped.
-- If price or content changed (policy-controlled), AI is re-run and the new result is stored.
-- AI cache lookup key includes listing identity, model, item/marketplace config hashes, prompt version/hash, and price-aware/content-aware invalidation policy.
-- Listing identity uses `marketplace + Facebook item ID` from URL when possible, with normalized URL hash fallback.
-- DB logs include `ai_cache_hit`, `ai_cache_miss`, `ai_eval_persisted`, and persisted notification event entries.
+## Quick Start
 
-### Maintenance
-
-- Retention cleanup command:
-  ```bash
-  python3 scripts/pg_cache_maintenance.py --retention-days 60
-  ```
-- You can set default retention with `AIMM_DB_RETENTION_DAYS`.
-- Schema bootstrap runs automatically from `scripts/init_postgres_cache.py` on each `./run.sh`.
-
-### Upgrading this fork from upstream
-
-1. Diff your forked package (`ai_marketplace_monitor/`) against upstream release notes.
-2. Re-apply local features in these files first: `ai.py`, `monitor.py`, `facebook.py`, `pg_cache.py`.
-3. Run tests (`python3 -m unittest discover -s tests`) and a dry scan before production use.
-
-## Skipped listings, logs, and detail cache
-
-When Facebook search filters out a listing (e.g. `[Skip] … without required keywords in title and description`, antikeywords, location, banned seller):
-
-- **Logs:** Those lines are normal **INFO** logging only. There is no separate “skipped listings” database for faster matching; use your log files or terminal history if you want to review them.
-- **PostgreSQL:** Skipped listings are **not** passed into the monitor’s main loop, so they are **not** upserted via `observe_listing` from that path (unlike listings that pass filters and get AI evaluation / tracking).
-- **Disk cache:** After a listing **detail page** is opened and parsed successfully, details are stored in **diskcache** under `~/.ai-marketplace-monitor/` (`Listing.to_cache`). That cache **survives closing the browser** and **new Playwright sessions**. If the same item URL appears again with the **same SERP title and price**, the scanner can **reuse cached details** and skip navigating to the listing tab again.
-- **What still happens every run:** Marketplace **search** still runs in the browser; result cards are still walked. Caching only avoids **repeat detail-page fetches** when the cache entry matches, not “hide this URL from search forever.”
-- **Shallow stable skip** (`AIMM_SHALLOW_STABLE_SKIP`): separate feature; it uses PostgreSQL (same price + prior AI row). Keyword-only skips do **not** enable that path by themselves.
-
-## Terminal output when something matches
-
-You do not need Discord or any other notifier to see hits in the terminal. After each search, when at least one listing passes the AI score threshold, a **compact summary** is printed to **stderr**:
-
-```text
-[found] your-item-name: 2 listing(s)
-  Title here | 500 kr | https://www.facebook.com/marketplace/item/...
-  Other title | 300 kr | https://...
-```
-
-- One header line: `[found]`, the item name from config, and how many listings matched.
-- One line per listing: title, price, and URL (query string stripped). If the listing was AI-evaluated, the line ends with  `| conclusion (score)` (short form, not the full AI comment).
-
-This behavior is now first-class fork logic in `ai_marketplace_monitor/monitor.py` (no runtime patching required).
-
-### Disable it
-
-Set in `.env`:
+### Python and frontend dependencies
 
 ```bash
-AIMM_PRINT_FOUND=0
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements-dev.txt
 ```
-
-Accepted “off” values: `0`, `false`, `no`, `off` (case-insensitive).
----
-
-## Dashboard (FastAPI + React)
-
-A read-only local dashboard for browsing the PostgreSQL cache — listings with AI evaluations, price history, and notification events.
-
-### Requirements
-
-- Python 3.11+ (for the API)
-- Node 18+ (for the frontend)
-- PostgreSQL cache populated by at least one monitor run (`AIMM_PG_CACHE_ENABLED=1`)
-
-### Start the API
-
-```bash
-cd backend
-./start.sh          # creates .venv, installs deps, starts uvicorn on http://127.0.0.1:8000
-```
-
-Or manually:
-```bash
-cd backend
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-# ensure AIMM_DATABASE_URL or DATABASE_URL is set (inherited from repo .env by start.sh)
-.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-### Start the frontend
 
 ```bash
 cd frontend
-npm install         # first time only
-npm run dev         # Vite dev server at http://127.0.0.1:5173
+npm install
 ```
 
-Open http://127.0.0.1:5173 in your browser.
+### Environment
 
-### Alembic (baseline stamp)
+Copy `.env.example` to `.env` and set the values you need locally.
 
-The schema is owned by `pg_cache.ensure_database()`. After first install, stamp Alembic so future dashboard-specific migrations work cleanly:
+Important settings:
+
+- `OPENROUTER_API_KEY`: AI scoring backend.
+- `AIMM_DATABASE_URL`: PostgreSQL connection string for scanner and dashboard data.
+- `AIMM_PG_CACHE_ENABLED=1`: enable the PostgreSQL cache layer.
+- `AIMM_REEVAL_ON_PRICE_CHANGE=1`: rerun AI when price changes.
+- `AIMM_REEVAL_ON_CONTENT_CHANGE=1`: rerun AI when listing content changes.
+- `AIMM_PROMPT_VERSION=v1`: bump when prompt semantics change.
+
+### Scanner
+
+`scraping_run.sh` is the canonical scanner entrypoint. It loads `.env`, ensures the local package is importable, bootstraps the PostgreSQL cache schema, and starts the CLI:
+
+```bash
+./scraping_run.sh
+```
+
+The main runtime config still lives outside the repo in `~/.ai-marketplace-monitor/config.toml`. This fork also supports an optional gitignored local overlay in `ai_marketplace_monitor/personal_config/personal.toml`.
+
+### Dashboard
+
+Start both backend and frontend:
+
+```bash
+./start.sh
+```
+
+Or start them separately:
 
 ```bash
 cd backend
-.venv/bin/alembic stamp head
+./start.sh
 ```
 
-### API endpoints
+```bash
+cd frontend
+npm run dev
+```
 
-| Endpoint | Description |
-|---|---|
-| `GET /api/listings` | Listings + latest AI evaluation. Filter: title, score_min/max, listing_kind, marketplace, date ranges. Sort: last_seen_at, score, title, evaluated_at. |
-| `GET /api/listing-price-history` | Price change log. Filter: listing_id, date range. |
-| `GET /api/notification-events` | Notification log. Filter: channel, status, listing_id, date range. |
+Default local URLs:
 
-All endpoints support `page`, `page_size`, `sort_dir`. Full OpenAPI docs: http://127.0.0.1:8000/docs
+- API: `http://127.0.0.1:8000`
+- Frontend: `http://127.0.0.1:5173`
+- OpenAPI docs: `http://127.0.0.1:8000/docs`
+
+## Development Workflow
+
+Quality checks:
+
+```bash
+ruff check .
+black --check .
+pytest
+python scripts/check_repo_hygiene.py
+cd frontend && npm run lint && npm run build
+```
+
+What CI enforces:
+
+- Python import/lint correctness via Ruff
+- Python formatting via Black
+- unit tests via pytest
+- repo hygiene checks for tracked secrets
+- frontend lint and production build
+
+## Safety Notes Before Publishing
+
+- Keep `.env` untracked.
+- Do not commit browser session state, API keys, DB dumps, or private troubleshooting notes.
+- Review any changes under `ai_marketplace_monitor/config.toml` before publishing to ensure it contains only safe defaults.
+- If a secret is ever committed, rotate it and clean the repository history.
+
+## Public Docs
+
+- [Documentation index](docs/README.md)
+- [Reference notes](docs/reference/README.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+
+## Known Constraints
+
+- Facebook page structure is unstable, so parser code and tests need periodic maintenance.
+- Most tests are unit-level and do not validate a live Facebook or PostgreSQL environment.
+- This repo contains active local development work; review the current diff before publishing a release branch or tag.
+
+## License
+
+[MIT](LICENSE)

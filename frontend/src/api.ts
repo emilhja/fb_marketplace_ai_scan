@@ -31,6 +31,14 @@ export interface ListingRow {
   description: string
   location: string
   skick: string
+  availability: string
+  is_tradera: boolean
+  message_sent: boolean
+  vram: string | null
+  vram_override: string | null
+  contacted_seller: boolean
+  user_note: string
+  user_feedback: 'up' | 'down' | null
   first_seen_at: string
   last_seen_at: string
   ai: LatestAIEval | null
@@ -40,6 +48,7 @@ export interface ListingsParams {
   page?: number
   page_size?: number
   title?: string
+  search?: string
   score_min?: number | ''
   score_max?: number | ''
   listing_kind?: string
@@ -59,6 +68,45 @@ export async function fetchListings(params: ListingsParams): Promise<PagedRespon
   return res.json()
 }
 
+export interface ListingUpdatePayload {
+  user_note?: string
+  user_feedback?: 'up' | 'down' | null
+  vram_override?: string | null
+  contacted_seller?: boolean
+}
+
+export async function updateListing(listingId: number, payload: ListingUpdatePayload): Promise<ListingRow> {
+  const res = await fetch(`/api/listings/${listingId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(`update-listing: ${res.status}`)
+  return res.json()
+}
+
+export interface ListingRerunResult {
+  listing_id: number
+  canonical_post_url: string | null
+  target_item: string | null
+  success: boolean
+  message: string
+}
+
+export interface ListingRerunResponse {
+  results: ListingRerunResult[]
+}
+
+export async function rerunListings(listingIds: number[]): Promise<ListingRerunResponse> {
+  const res = await fetch('/api/listings/rerun', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ listing_ids: listingIds }),
+  })
+  if (!res.ok) throw new Error(`rerun-listings: ${res.status}`)
+  return res.json()
+}
+
 // ---------- Price history ----------
 export interface PriceHistoryRow {
   id: number
@@ -66,6 +114,8 @@ export interface PriceHistoryRow {
   listing_title: string | null
   canonical_post_url: string | null
   price: string
+  previous_price: string | null
+  changed_by: number | null
   observed_at: string
 }
 

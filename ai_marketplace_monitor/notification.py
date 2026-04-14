@@ -278,7 +278,9 @@ def send_plain_alert(
                 if sub2.__name__ == "UserConfig":
                     continue
                 flds2 = {f.name for f in fields(sub2)}
-                obj2 = sub2(**{k: getattr(user_config, k) for k in flds2 if hasattr(user_config, k)})
+                obj2 = sub2(
+                    **{k: getattr(user_config, k) for k in flds2 if hasattr(user_config, k)}
+                )
                 if callable(getattr(obj2, "send_message_with_retry", None)):
                     sent.append(obj2.send_message_with_retry(title, body, logger=logger))
     return any(sent)

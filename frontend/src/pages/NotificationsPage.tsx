@@ -28,21 +28,36 @@ export default function NotificationsPage() {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setError(null)
-    const params: NotificationParams = {
-      page,
-      page_size: PAGE_SIZE,
-      listing_id: listingId === '' ? undefined : listingId,
-      channel: channel || undefined,
-      status: status || undefined,
-      sent_from: sentFrom || undefined,
-      sent_to: sentTo || undefined,
-      sort_dir: sortDir,
+    async function loadNotifications() {
+      setLoading(true)
+      setError(null)
+      const params: NotificationParams = {
+        page,
+        page_size: PAGE_SIZE,
+        listing_id: listingId === '' ? undefined : listingId,
+        channel: channel || undefined,
+        status: status || undefined,
+        sent_from: sentFrom || undefined,
+        sent_to: sentTo || undefined,
+        sort_dir: sortDir,
+      }
+      try {
+        const nextData = await fetchNotifications(params)
+        if (!cancelled) {
+          setData(nextData)
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(String(e))
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      }
     }
-    fetchNotifications(params)
-      .then(d => { if (!cancelled) { setData(d); setLoading(false) } })
-      .catch(e => { if (!cancelled) { setError(String(e)); setLoading(false) } })
+
+    void loadNotifications()
     return () => { cancelled = true }
   }, [page, listingId, channel, status, sentFrom, sentTo, sortDir])
 
