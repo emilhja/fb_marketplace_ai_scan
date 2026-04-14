@@ -16,6 +16,15 @@ The repository is now structured to be shareable on GitHub:
 - Exposes a read-only dashboard API plus a React UI for listings, price history, and notifications.
 - Supports notification workflows and rerun queue processing for listings that need another pass.
 
+## Tech Stack
+
+- Python 3.11+ for the scanner, scripts, tests, and backend services
+- Playwright for Marketplace browser automation
+- PostgreSQL with `psycopg` and SQLAlchemy for cache and dashboard data
+- FastAPI and Pydantic for the dashboard API
+- React, TypeScript, Vite, and ESLint for the frontend
+- Ruff, Black, pytest, and GitHub Actions for code quality and CI
+
 ## Repository Layout
 
 - `ai_marketplace_monitor/`: vendored scanner logic and Marketplace-specific parsing.
@@ -24,7 +33,6 @@ The repository is now structured to be shareable on GitHub:
 - `scripts/`: operational helper scripts.
 - `tests/`: hermetic unit tests.
 - `docs/`: public reference notes.
-- `dev_documents/`: local-only notes. Ignored by git.
 
 ## Quick Start
 
@@ -62,7 +70,9 @@ Important settings:
 ./scraping_run.sh
 ```
 
-The main runtime config still lives outside the repo in `~/.ai-marketplace-monitor/config.toml`. This fork also supports an optional gitignored local overlay in `ai_marketplace_monitor/personal_config/personal.toml`.
+The main runtime config still lives outside the repo in `~/.ai-marketplace-monitor/config.toml`. This fork also supports an optional gitignored local overlay in `ai_marketplace_monitor/personal_config/personal.toml`; start from [ai_marketplace_monitor/personal_config/personal.toml.example](/home/emiloanna/privata_projekt/facebook_marketplace_scan/ai_marketplace_monitor/personal_config/personal.toml.example).
+
+Use `~/.ai-marketplace-monitor/config.toml` for your normal long-lived searches and defaults across machines or repos. Use `ai_marketplace_monitor/personal_config/personal.toml` for repo-specific local overrides that should stay private, such as experimental prompts, temporary model changes, local notification routing, or Facebook credentials during development.
 
 ### Dashboard
 

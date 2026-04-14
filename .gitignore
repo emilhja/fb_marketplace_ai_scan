@@ -17,6 +17,9 @@ htmlcov/
 
 # Local marketplace search / secrets (optional; merged after ~/.ai-marketplace-monitor/config.toml)
 ai_marketplace_monitor/personal_config/
+!ai_marketplace_monitor/personal_config/
+ai_marketplace_monitor/personal_config/*
+!ai_marketplace_monitor/personal_config/personal.toml.example
 dev_documents/
 
 # Dashboard backend venv
