@@ -27,7 +27,7 @@ graph TD
     B --> C[Playwright / Facebook]
     B --> D[OpenRouter AI]
     B --> E[(PostgreSQL)]
-    F[start.sh] --> G[FastAPI backend :8000]
+    F[start_backend_and_frontend.sh] --> G[FastAPI backend :8000]
     F --> H[React frontend :5173]
     G --> E
     H --> G
@@ -61,7 +61,7 @@ graph TD
 ├── .env.example              # Environment variable template — copy to .env
 ├── personal.toml.example     # Optional personal config overlay — copy to personal.toml
 ├── scraping_run.sh           # Scanner entrypoint
-└── start.sh                  # Starts backend + frontend together
+└── start_backend_and_frontend.sh  # Starts backend + frontend together
 ```
 
 ---
@@ -155,7 +155,7 @@ python scripts/docker_postgres_up.py
 cd frontend && npm install && cd ..
 
 # Start both backend API and frontend dev server
-./start.sh
+./start_backend_and_frontend.sh
 ```
 
 | URL | Purpose |
@@ -173,12 +173,27 @@ cd frontend && npm install && cd ..
 Run these before every push:
 
 ```bash
-ruff check .
-black --check .
-pytest
-python scripts/check_repo_hygiene.py
-cd frontend && npm run lint && npm run build
+ALLOW_PUSH_TO_MAIN=1 ./scripts/pre_push_check.sh
 ```
+
+Install it as a real git hook if you want the check to run automatically:
+
+```bash
+./scripts/install_git_hooks.sh
+```
+
+Blocking checks:
+- secret scanning and repo hygiene
+- YAML/TOML validation
+- `pip-audit`
+- `pytest`
+- frontend production build
+- `npm audit --audit-level=high`
+
+Advisory checks:
+- `trailing-whitespace`
+- `end-of-file-fixer`
+- frontend lint
 
 ### What CI enforces
 
@@ -186,7 +201,8 @@ cd frontend && npm run lint && npm run build
 - Python formatting (Black)
 - Unit tests (pytest)
 - Repository hygiene (no tracked secrets)
-- Frontend lint and production build
+- Frontend production build
+- Frontend lint is advisory in the local pre-push helper
 
 ### Useful scripts
 
@@ -198,6 +214,8 @@ cd frontend && npm run lint && npm run build
 | `scripts/process_rerun_queue.py` | Drain the AI rerun queue |
 | `scripts/rescrape_visa_mer.py` | Re-fetch listings with truncated descriptions |
 | `scripts/check_repo_hygiene.py` | Verify no secrets are tracked |
+| `scripts/pre_push_check.sh` | Run the local blocking/advisory pre-push checks |
+| `scripts/install_git_hooks.sh` | Install `pre_push_check.sh` as `.git/hooks/pre-push` |
 
 ---
 

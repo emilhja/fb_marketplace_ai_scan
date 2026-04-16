@@ -12,16 +12,24 @@ cd "$ROOT_DIR"
 
 # Colors for output
 GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
+
+warn() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+}
 
 echo "🚀 Starting full project verification..."
 
 # 0a. Branch guard
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-if [ "$CURRENT_BRANCH" = "main" ]; then
-    echo -e "${RED}⚠️  Pushing directly to main. Press Enter to continue or Ctrl+C to abort.${NC}"
-    read -r
+if [ "$CURRENT_BRANCH" = "main" ] && [ "${ALLOW_PUSH_TO_MAIN:-0}" != "1" ]; then
+    echo -e "${RED}❌ Refusing to push directly to main.${NC}"
+    warn "Set ALLOW_PUSH_TO_MAIN=1 if this is intentional."
+    exit 1
+elif [ "$CURRENT_BRANCH" = "main" ]; then
+    warn "Pushing directly to main because ALLOW_PUSH_TO_MAIN=1 is set."
 fi
 
 # 0b. Check for accidentally tracked secret files
@@ -57,10 +65,10 @@ fi
 
 echo -e "\n🧹 Running non-blocking formatting hooks..."
 if ! pre-commit run trailing-whitespace --all-files; then
-    echo -e "${RED}⚠️  trailing-whitespace reported fixes or issues, but push is still allowed.${NC}"
+    warn "trailing-whitespace reported fixes or issues, but push is still allowed."
 fi
 if ! pre-commit run end-of-file-fixer --all-files; then
-    echo -e "${RED}⚠️  end-of-file-fixer reported fixes or issues, but push is still allowed.${NC}"
+    warn "end-of-file-fixer reported fixes or issues, but push is still allowed."
 fi
 
 # 2. Dependency Audit
@@ -70,6 +78,8 @@ PIP_AUDIT_CMD=(pip-audit)
 if [ -x ".venv/bin/python" ]; then
     PIP_AUDIT_CMD=(.venv/bin/python -m pip_audit)
 fi
+
+echo "Using pip-audit command: ${PIP_AUDIT_CMD[*]}"
 
 if ! "${PIP_AUDIT_CMD[@]}" --ignore-vuln CVE-2025-69872; then
     echo -e "${RED}❌ pip-audit found unignored vulnerabilities.${NC}"
@@ -87,7 +97,7 @@ fi
 echo -e "\n💻 Verifying Frontend..."
 pushd frontend >/dev/null
 if ! npm run lint; then
-    echo -e "${RED}⚠️  Frontend lint reported issues, but push is still allowed.${NC}"
+    warn "Frontend lint reported issues, but push is still allowed."
 fi
 if ! npm run build; then
     echo -e "${RED}❌ Frontend build failed.${NC}"

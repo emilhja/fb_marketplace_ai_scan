@@ -19,11 +19,33 @@
 Run these before pushing:
 
 ```bash
-ruff check .
-black --check .
-pytest
-python scripts/check_repo_hygiene.py
-cd frontend && npm run lint && npm run build
+./scripts/pre_push_check.sh
+```
+
+To enable the same check automatically on every push:
+
+```bash
+./scripts/install_git_hooks.sh
+```
+
+Blocking checks in the helper:
+- secret scanning and repo hygiene
+- YAML/TOML validation
+- `pip-audit`
+- `pytest`
+- frontend production build
+- `npm audit --audit-level=high`
+
+Advisory checks in the helper:
+- `trailing-whitespace`
+- `end-of-file-fixer`
+- frontend lint
+
+Direct pushes from `main` are blocked by default. Override intentionally with:
+
+```bash
+ALLOW_PUSH_TO_MAIN=1 ./scripts/pre_push_check.sh
+ALLOW_PUSH_TO_MAIN=1 git push
 ```
 
 ## Style
