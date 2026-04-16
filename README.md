@@ -133,13 +133,20 @@ Or spin up a local PostgreSQL container:
 python scripts/docker_postgres_up.py
 ```
 
-### 5. Run the scanner
+### 5. Run the scanner (Interactive Login)
 
 ```bash
 ./scraping_run.sh
 ```
 
-The script loads `.env`, activates the venv, bootstraps the DB schema, and starts the CLI. A Chromium window will open — log in to Facebook when prompted.
+**What to expect on first run:**
+1. A **Chromium browser window** will open automatically.
+2. **You must log in to Facebook** manually in this window.
+3. The scanner uses a "storage state" (saved in your `~/.ai-marketplace-monitor/` folder) to keep you logged in. You usually only need to perform this manual login once.
+4. Once logged in, the scanner will begin navigating to the marketplace URLs defined in your config.
+
+> [!TIP]
+> If you get logged out or face a "Login required" error later, just run the scanner again. It will reopen the window for you to re-authenticate.
 
 ### 6. Run the dashboard
 
