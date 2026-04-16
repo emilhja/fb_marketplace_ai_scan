@@ -182,6 +182,9 @@ Install it as a real git hook if you want the check to run automatically:
 ./scripts/install_git_hooks.sh
 ```
 
+If you intentionally push from `main`, you can either prefix the command with
+`ALLOW_PUSH_TO_MAIN=1` or set `ALLOW_PUSH_TO_MAIN=1` in your local `.env`.
+
 Blocking checks:
 - secret scanning and repo hygiene
 - YAML/TOML validation
