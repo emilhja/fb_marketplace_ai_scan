@@ -12,8 +12,8 @@ We use **`openai/gpt-oss-120b:free`** as the pinned free model: stronger adheren
 
 If you see timeouts or HTTP 429 from OpenRouter:
 
-- Increase spacing between AI calls (e.g. `.env` → `AIMM_AI_DELAY_SECONDS`), or  
-- Temporarily switch to **`openai/gpt-oss-20b:free`** in `personal.toml`, or  
+- Increase spacing between AI calls (e.g. `.env` → `AIMM_AI_DELAY_SECONDS`), or
+- Temporarily switch to **`openai/gpt-oss-20b:free`** in `personal.toml`, or
 - Move to a **paid** fixed slug with its own limits.
 
 ## Cache note

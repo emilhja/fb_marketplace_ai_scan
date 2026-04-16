@@ -31,9 +31,9 @@ def main():
     with psycopg.connect(db_url) as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT DISTINCT l.canonical_post_url, a.listing_kind 
-                FROM listings l 
-                LEFT JOIN ai_evaluations a ON l.id = a.listing_id 
+                SELECT DISTINCT l.canonical_post_url, a.listing_kind
+                FROM listings l
+                LEFT JOIN ai_evaluations a ON l.id = a.listing_id
                 WHERE l.description ILIKE '%visa mer%';
             """)
             for row in cur.fetchall():

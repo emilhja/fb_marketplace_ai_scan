@@ -31,3 +31,4 @@ playwright/.auth/
 *.db
 *.sqlite
 *.sqlite3
+*.log
