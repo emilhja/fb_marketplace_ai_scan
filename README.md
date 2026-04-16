@@ -142,7 +142,7 @@ python scripts/docker_postgres_up.py
 **What to expect on first run:**
 1. A **Chromium browser window** will open automatically.
 2. **You must log in to Facebook** manually in this window.
-3. The scanner uses a "storage state" (saved in your `~/.ai-marketplace-monitor/` folder) to keep you logged in. You usually only need to perform this manual login once.
+3. The scanner uses a "storage state" to keep you logged in. That Playwright login state, including cookies/session tokens, is saved under your home directory in `~/.ai-marketplace-monitor/`, not inside this repository.
 4. Once logged in, the scanner will begin navigating to the marketplace URLs defined in your config.
 
 > [!TIP]
@@ -222,6 +222,7 @@ Advisory checks:
 ## Safety Notes
 
 - Keep `.env` and `personal.toml` off version control (both are gitignored).
+- Playwright browser session state is stored outside the repo in `~/.ai-marketplace-monitor/`; it is not intended to be committed from this repository.
 - Do not commit browser session state, API keys, DB dumps, or private notes.
 - Review `ai_marketplace_monitor/config.toml` before publishing — it should contain only safe defaults (region/translation definitions, no credentials).
 - If a secret is ever committed accidentally: rotate it and clean the repository history immediately.

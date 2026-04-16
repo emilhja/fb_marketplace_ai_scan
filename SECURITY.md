@@ -8,6 +8,7 @@ This repository is intended for local, self-hosted use. It automates Facebook Ma
 
 - Keep `.env` local. Only `.env.example` should ever be committed.
 - Do not commit API keys, bot tokens, SMTP credentials, browser session state, or private config overlays.
+- Playwright login state, including Facebook cookies/session tokens, is expected to live outside the repo under `~/.ai-marketplace-monitor/`. It is local machine state, not repository data.
 - Review `personal.toml` (repo root, gitignored) and `dev_documents/` before pushing. Both are ignored on purpose.
 - If you persist Marketplace login state locally, treat that storage like a secret and rotate it if you suspect leakage.
 
