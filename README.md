@@ -1,6 +1,6 @@
 # 🛒 Facebook Marketplace Scan
 
-![CI](https://github.com/emilhja/facebook_marketplace_scan/actions/workflows/ci.yml/badge.svg)
+[![CI](https://github.com/emilhja/fb_marketplace_ai_scan/actions/workflows/ci.yml/badge.svg)](https://github.com/emilhja/fb_marketplace_ai_scan/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -84,7 +84,7 @@ The dashboard ports are user-configurable in `.env` via `DASHBOARD_BACKEND_PORT`
 ### 1. Clone and install Python dependencies
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/facebook_marketplace_scan.git
+git clone https://github.com/emilhja/fb_marketplace_ai_scan.git
 cd facebook_marketplace_scan
 
 python3 -m venv .venv
