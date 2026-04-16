@@ -27,11 +27,14 @@ graph TD
     B --> C[Playwright / Facebook]
     B --> D[OpenRouter AI]
     B --> E[(PostgreSQL)]
-    F[start_backend_and_frontend.sh] --> G[FastAPI backend :8000]
-    F --> H[React frontend :5173]
+    F[start_backend_and_frontend.sh] --> G[FastAPI backend :DASHBOARD_BACKEND_PORT]
+    F --> H[React frontend :DASHBOARD_FRONTEND_PORT]
     G --> E
     H --> G
 ```
+
+The dashboard ports are user-configurable in `.env` via `DASHBOARD_BACKEND_PORT` and
+`DASHBOARD_FRONTEND_PORT`.
 
 ---
 
