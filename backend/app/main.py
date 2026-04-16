@@ -1,5 +1,4 @@
-"""FastAPI application entrypoint for the local dashboard API."""
-
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -23,12 +22,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_frontend_port = os.environ.get("DASHBOARD_FRONTEND_PORT", "5173")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-        # allow production build served on the same host
+        f"http://127.0.0.1:{_frontend_port}",
+        f"http://localhost:{_frontend_port}",
+        # allow production preview build served on the same host
         "http://127.0.0.1:4173",
         "http://localhost:4173",
     ],

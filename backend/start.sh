@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Start the dashboard API on http://127.0.0.1:8000
+# Start the dashboard API. Port defaults to 8000; override with DASHBOARD_BACKEND_PORT in .env.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Load .env from repo root so AIMM_DATABASE_URL / DATABASE_URL is set
+# Load .env from repo root so AIMM_DATABASE_URL / DATABASE_URL and port vars are set
 if [ -f "$REPO_ROOT/.env" ]; then
   set -a
   # shellcheck disable=SC1091
@@ -23,10 +23,13 @@ fi
 
 .venv/bin/pip install -q -r requirements.txt
 
+BACKEND_PORT="${DASHBOARD_BACKEND_PORT:-8000}"
+
 .venv/bin/python "$REPO_ROOT/scripts/process_rerun_queue.py" --loop &
 QUEUE_WORKER_PID=$!
 
-.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload &
+echo "Starting backend API on http://127.0.0.1:${BACKEND_PORT}"
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "${BACKEND_PORT}" --reload &
 UVICORN_PID=$!
 
 cleanup() {
