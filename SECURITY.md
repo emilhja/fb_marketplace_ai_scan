@@ -8,7 +8,7 @@ This repository is intended for local, self-hosted use. It automates Facebook Ma
 
 - Keep `.env` local. Only `.env.example` should ever be committed.
 - Do not commit API keys, bot tokens, SMTP credentials, browser session state, or private config overlays.
-- Review `ai_marketplace_monitor/personal_config/` and `dev_documents/` before pushing. Both are ignored on purpose.
+- Review `personal.toml` (repo root, gitignored) and `dev_documents/` before pushing. Both are ignored on purpose.
 - If you persist Marketplace login state locally, treat that storage like a secret and rotate it if you suspect leakage.
 
 ## Reporting an issue

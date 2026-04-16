@@ -14,13 +14,9 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
-.codex
 
-# Local marketplace search / secrets (optional; merged after ~/.ai-marketplace-monitor/config.toml)
-ai_marketplace_monitor/personal_config/
-!ai_marketplace_monitor/personal_config/
-ai_marketplace_monitor/personal_config/*
-!ai_marketplace_monitor/personal_config/personal.toml.example
+# Local marketplace search / secrets: personal config overlay at repo root
+personal.toml
 dev_documents/
 
 # Dashboard backend venv

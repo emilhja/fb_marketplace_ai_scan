@@ -4,7 +4,7 @@
 
 Do **not** use `openrouter/free` for listing evaluation. That slug is a **router**: each request can land on a different free model, so `response_model` in PostgreSQL changes every time and scores are **not comparable** across listings or runs.
 
-Set a **single** OpenRouter model slug in config (for this repo, typically `ai_marketplace_monitor/personal_config/personal.toml` under `[ai.openrouter]` → `model`).
+Set a **single** OpenRouter model slug in config (for this repo, typically `personal.toml` in the repo root under `[ai.openrouter]` → `model`).
 
 ## Current default in this workspace
 

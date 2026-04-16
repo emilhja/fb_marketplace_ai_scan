@@ -60,12 +60,8 @@ def main() -> int:
             content = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        if any(snippet in content for snippet in PLACEHOLDER_SNIPPETS):
-            content_for_scan = content
-        else:
-            content_for_scan = content
         for label, pattern in SECRET_PATTERNS.items():
-            if pattern.search(content_for_scan):
+            if pattern.search(content):
                 problems.append(f"{path}: matched {label}")
 
     if problems:

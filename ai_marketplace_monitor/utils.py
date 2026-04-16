@@ -48,9 +48,10 @@ from watchdog.observers import Observer
 amm_home = Path.home() / ".ai-marketplace-monitor"
 amm_home.mkdir(parents=True, exist_ok=True)
 
-# optional repo-local personal config (see `personal_config/` in .gitignore)
+# optional repo-local personal config — personal.toml in the repo root (gitignored)
 amm_package_dir = Path(__file__).resolve().parent
-amm_personal_config = amm_package_dir / "personal_config" / "personal.toml"
+amm_repo_root = amm_package_dir.parent
+amm_personal_config = amm_repo_root / "personal.toml"
 
 cache = Cache(amm_home)
 

@@ -41,7 +41,7 @@ def main(
             help=(
                 "Extra TOML files merged last. "
                 "Before that: bundled package config, optional ~/.ai-marketplace-monitor/config.toml, "
-                "optional ai_marketplace_monitor/personal_config/personal.toml (gitignored in this repo)."
+                "optional personal.toml in the repo root (gitignored)."
             ),
         ),
     ] = None,
@@ -155,7 +155,6 @@ def main(
     except Exception as e:
         logger.error(f"""{hilight("[Monitor]", "fail")} {e}""")
         raise
-        sys.exit(1)
     finally:
         monitor.stop_monitor()
         rich.print(counter)

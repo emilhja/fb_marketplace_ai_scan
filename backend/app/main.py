@@ -45,4 +45,3 @@ app.include_router(notifications.router)
 def health() -> dict[str, str]:
     """Return a minimal liveness payload for local tooling and CI smoke tests."""
     return {"status": "ok"}
-

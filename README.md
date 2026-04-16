@@ -1,109 +1,169 @@
-# Facebook Marketplace Scan
+# 🛒 Facebook Marketplace Scan
 
-`facebook_marketplace_scan` is a personal fork of `ai-marketplace-monitor` with a PostgreSQL-backed cache, a small FastAPI + React dashboard, and extra workflow support for rerunning or reviewing listings locally.
+![CI](https://github.com/YOUR_USERNAME/facebook_marketplace_scan/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-The repository is now structured to be shareable on GitHub:
+> **⚠️ Educational purposes only.**
+> This project is a personal learning exercise exploring browser automation, AI API integration, PostgreSQL caching, and full-stack dashboards. It is **not** intended for commercial use or large-scale scraping. Using automation tools on Facebook may violate [Facebook's Terms of Service](https://www.facebook.com/terms.php) — use responsibly and at your own risk.
 
-- public docs stay in the repo
-- private notes belong in `dev_documents/` and are ignored
-- local secrets belong in `.env`, never in tracked files
-- CI validates Python style/tests and the frontend build
+---
 
-## What It Does
+A personal fork of [`ai-marketplace-monitor`](https://github.com/BoPeng/ai-marketplace-monitor) extended with:
 
-- Scans Facebook Marketplace searches using the vendored `ai_marketplace_monitor` package.
-- Caches listing observations and AI evaluations in PostgreSQL to reduce duplicate work.
-- Exposes a read-only dashboard API plus a React UI for listings, price history, and notifications.
-- Supports notification workflows and rerun queue processing for listings that need another pass.
+- **PostgreSQL cache** — deduplicates listing observations and AI evaluations across runs
+- **FastAPI + React dashboard** — browse listings, price history, and notifications locally
+- **Rerun queue** — re-evaluate specific listings without a full scan
+- **Tradera detection** — flags third-party Tradera integrations on Facebook Marketplace
+- **Swedish locale support** — UI strings and city slugs tuned for Swedish Marketplace
+
+---
+
+## Architecture
+
+```mermaid
+graph TD
+    A[scraping_run.sh] --> B[ai_marketplace_monitor CLI]
+    B --> C[Playwright / Facebook]
+    B --> D[OpenRouter AI]
+    B --> E[(PostgreSQL)]
+    F[start.sh] --> G[FastAPI backend :8000]
+    F --> H[React frontend :5173]
+    G --> E
+    H --> G
+```
+
+---
 
 ## Tech Stack
 
-- Python 3.11+ for the scanner, scripts, tests, and backend services
-- Playwright for Marketplace browser automation
-- PostgreSQL with `psycopg` and SQLAlchemy for cache and dashboard data
-- FastAPI and Pydantic for the dashboard API
-- React, TypeScript, Vite, and ESLint for the frontend
-- Ruff, Black, pytest, and GitHub Actions for code quality and CI
+| Layer | Technology |
+|---|---|
+| Scraper | Python 3.11+, Playwright, `ai-marketplace-monitor` |
+| AI | OpenRouter (OpenAI-compatible) |
+| Cache & Storage | PostgreSQL, psycopg 3, SQLAlchemy, Alembic |
+| Dashboard API | FastAPI, Pydantic, Uvicorn |
+| Dashboard UI | React 19, TypeScript, Vite, Tailwind CSS |
+| Code Quality | Ruff, Black, pytest, GitHub Actions |
+
+---
 
 ## Repository Layout
 
-- `ai_marketplace_monitor/`: vendored scanner logic and Marketplace-specific parsing.
-- `backend/`: FastAPI API, SQLAlchemy models, and rerun queue support.
-- `frontend/`: React + Vite dashboard UI.
-- `scripts/`: operational helper scripts.
-- `tests/`: hermetic unit tests.
-- `docs/`: public reference notes.
+```
+.
+├── ai_marketplace_monitor/   # Vendored & extended scanner package
+├── backend/                  # FastAPI dashboard API + Alembic migrations
+├── frontend/                 # React + Vite dashboard UI
+├── scripts/                  # Operational helpers (init DB, process queue, etc.)
+├── tests/                    # Hermetic unit tests (no live DB or browser required)
+├── docs/reference/           # Design and behaviour reference notes
+├── .env.example              # Environment variable template — copy to .env
+├── personal.toml.example     # Optional personal config overlay — copy to personal.toml
+├── scraping_run.sh           # Scanner entrypoint
+└── start.sh                  # Starts backend + frontend together
+```
+
+---
+
+## Prerequisites
+
+- **Python 3.11+** with `pip`
+- **Node.js v20.19+ or v22+** (for the React dashboard)
+- **PostgreSQL** database (local or Docker — see `scripts/docker_postgres_up.py`)
+- Playwright browsers installed: `playwright install chromium`
+- An [OpenRouter](https://openrouter.ai/keys) API key (free tier works)
+
+---
 
 ## Quick Start
 
-### Python and frontend dependencies
+### 1. Clone and install Python dependencies
 
 ```bash
+git clone https://github.com/YOUR_USERNAME/facebook_marketplace_scan.git
+cd facebook_marketplace_scan
+
 python3 -m venv .venv
-. .venv/bin/activate
+source .venv/bin/activate
 pip install -r requirements-dev.txt
+playwright install chromium
 ```
 
-*(Note: The React dashboard requires **Node.js v20.19+** or **v22+** to build properly)*
+### 2. Configure environment
+
 ```bash
-cd frontend
-npm install
+cp .env.example .env
+# Edit .env — at minimum set OPENROUTER_API_KEY and AIMM_DATABASE_URL
 ```
 
-### Environment
+Key settings in `.env`:
 
-Copy `.env.example` to `.env` and set the values you need locally.
+| Variable | Description |
+|---|---|
+| `OPENROUTER_API_KEY` | AI scoring API key from openrouter.ai |
+| `AIMM_DATABASE_URL` | PostgreSQL connection string |
+| `AIMM_PG_CACHE_ENABLED` | `1` to enable the cache layer |
+| `AIMM_REEVAL_ON_PRICE_CHANGE` | `1` to re-run AI when price changes |
+| `AIMM_PROMPT_VERSION` | Bump when you change rating prompts |
 
-Important settings:
+### 3. Configure what to search for
 
-- `OPENROUTER_API_KEY`: AI scoring backend.
-- `AIMM_DATABASE_URL`: PostgreSQL connection string for scanner and dashboard data.
-- `AIMM_PG_CACHE_ENABLED=1`: enable the PostgreSQL cache layer.
-- `AIMM_REEVAL_ON_PRICE_CHANGE=1`: rerun AI when price changes.
-- `AIMM_REEVAL_ON_CONTENT_CHANGE=1`: rerun AI when listing content changes.
-- `AIMM_PROMPT_VERSION=v1`: bump when prompt semantics change.
+The main runtime config lives in `~/.ai-marketplace-monitor/config.toml` (the standard `ai-marketplace-monitor` config location).
 
-### Scanner
+For repo-local overrides you can also create `personal.toml` in the repo root (gitignored):
 
-`scraping_run.sh` is the canonical scanner entrypoint. It loads `.env`, ensures the local package is importable, bootstraps the PostgreSQL cache schema, and starts the CLI:
+```bash
+cp personal.toml.example personal.toml
+# Edit personal.toml — add your searches, AI settings, city, radius, etc.
+```
+
+Use `~/.ai-marketplace-monitor/config.toml` for long-lived searches shared across machines.
+Use `personal.toml` for repo-specific experiments: temporary prompt changes, model switches, local notification routing, or Facebook credentials during development.
+
+### 4. Bootstrap the database
+
+```bash
+python scripts/init_postgres_cache.py
+```
+
+Or spin up a local PostgreSQL container:
+
+```bash
+python scripts/docker_postgres_up.py
+```
+
+### 5. Run the scanner
 
 ```bash
 ./scraping_run.sh
 ```
 
-The main runtime config still lives outside the repo in `~/.ai-marketplace-monitor/config.toml`. This fork also supports an optional gitignored local overlay in `ai_marketplace_monitor/personal_config/personal.toml`; start from [ai_marketplace_monitor/personal_config/personal.toml.example](/home/emiloanna/privata_projekt/facebook_marketplace_scan/ai_marketplace_monitor/personal_config/personal.toml.example).
+The script loads `.env`, activates the venv, bootstraps the DB schema, and starts the CLI. A Chromium window will open — log in to Facebook when prompted.
 
-Use `~/.ai-marketplace-monitor/config.toml` for your normal long-lived searches and defaults across machines or repos. Use `ai_marketplace_monitor/personal_config/personal.toml` for repo-specific local overrides that should stay private, such as experimental prompts, temporary model changes, local notification routing, or Facebook credentials during development.
-
-### Dashboard
-
-Start both backend and frontend:
+### 6. Run the dashboard
 
 ```bash
+# Install frontend dependencies (first time only)
+cd frontend && npm install && cd ..
+
+# Start both backend API and frontend dev server
 ./start.sh
 ```
 
-Or start them separately:
+| URL | Purpose |
+|---|---|
+| `http://127.0.0.1:8000` | Dashboard API |
+| `http://127.0.0.1:8000/docs` | Interactive API docs (Swagger) |
+| `http://127.0.0.1:5173` | React dashboard |
 
-```bash
-cd backend
-./start.sh
-```
+---
 
-```bash
-cd frontend
-npm run dev
-```
+## Development
 
-Default local URLs:
+### Quality checks
 
-- API: `http://127.0.0.1:8000`
-- Frontend: `http://127.0.0.1:5173`
-- OpenAPI docs: `http://127.0.0.1:8000/docs`
-
-## Development Workflow
-
-Quality checks:
+Run these before every push:
 
 ```bash
 ruff check .
@@ -113,34 +173,48 @@ python scripts/check_repo_hygiene.py
 cd frontend && npm run lint && npm run build
 ```
 
-What CI enforces:
+### What CI enforces
 
-- Python import/lint correctness via Ruff
-- Python formatting via Black
-- unit tests via pytest
-- repo hygiene checks for tracked secrets
-- frontend lint and production build
+- Python import/lint correctness (Ruff)
+- Python formatting (Black)
+- Unit tests (pytest)
+- Repository hygiene (no tracked secrets)
+- Frontend lint and production build
 
-## Safety Notes Before Publishing
+### Useful scripts
 
-- Keep `.env` untracked.
-- Do not commit browser session state, API keys, DB dumps, or private troubleshooting notes.
-- Review any changes under `ai_marketplace_monitor/config.toml` before publishing to ensure it contains only safe defaults.
-- If a secret is ever committed, rotate it and clean the repository history.
+| Script | Purpose |
+|---|---|
+| `scripts/init_postgres_cache.py` | Bootstrap DB schema |
+| `scripts/docker_postgres_up.py` | Start a local Postgres container |
+| `scripts/pg_cache_maintenance.py` | Vacuum old rows |
+| `scripts/process_rerun_queue.py` | Drain the AI rerun queue |
+| `scripts/rescrape_visa_mer.py` | Re-fetch listings with truncated descriptions |
+| `scripts/check_repo_hygiene.py` | Verify no secrets are tracked |
+
+---
+
+## Safety Notes
+
+- Keep `.env` and `personal.toml` off version control (both are gitignored).
+- Do not commit browser session state, API keys, DB dumps, or private notes.
+- Review `ai_marketplace_monitor/config.toml` before publishing — it should contain only safe defaults (region/translation definitions, no credentials).
+- If a secret is ever committed accidentally: rotate it and clean the repository history immediately.
+
+---
 
 ## Public Docs
 
-- [Documentation index](docs/README.md)
-- [Reference notes](docs/reference/README.md)
+- [Reference docs](docs/reference/README.md)
 - [Contributing guide](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 
 ## Known Constraints
 
-- Facebook page structure is unstable, so parser code and tests need periodic maintenance.
-- Most tests are unit-level and do not validate a live Facebook or PostgreSQL environment.
-- This repo contains active local development work; review the current diff before publishing a release branch or tag.
+- Facebook's page structure changes frequently — parser code needs periodic maintenance.
+- Most tests are unit-level and do not require a live Facebook session or PostgreSQL instance.
+- This is a personal project; expect rough edges and Swedish-specific UI assumptions.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — see also the upstream [ai-marketplace-monitor](https://github.com/BoPeng/ai-marketplace-monitor) project.
